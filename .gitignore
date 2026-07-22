@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+outputs/
+inspection_web_app/annotations/
+inspection_web_app/.inference_cache
+inspection_web_app/__pycache__/

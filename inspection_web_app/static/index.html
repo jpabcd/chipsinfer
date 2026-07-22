@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>工业检测图片评价台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>工业检测图片评价台</h1>
+      <p>分类结果、目标检测问题和绿色缺陷框独立评价保存。</p>
+    </div>
+    <div class="header-actions">
+      <label class="import-control">
+        导入 JSON
+        <input id="importFile" type="file" accept="application/json,.json">
+      </label>
+      <a class="export-link" href="/api/annotations" download="inspection_annotations.json">下载评价 JSON</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="controls" aria-label="筛选与显示设置">
+      <label>
+        推理结果 JSON
+        <input id="resultJson" type="text" value="" placeholder="例如：outputs/run_20260721_054435/json/main_inferer_dataloader_results.json">
+      </label>
+      <label>
+        工程目录
+        <input id="projectDir" type="text" value="" placeholder="例如：/workspace/.../Detectors/rect_detector">
+      </label>
+      <label>
+        数据根目录
+        <input id="baseDir" type="text" value="" placeholder="非 JSON 模式时填写图片目录">
+      </label>
+      <label>
+        光照通道
+        <select id="lightType">
+          <option>All</option>
+          <option>light_1</option>
+          <option>light_2</option>
+          <option>light_3</option>
+          <option>light_4</option>
+        </select>
+      </label>
+      <div class="filter-group">
+        <span>模型判定为</span>
+        <div class="segmented model-filter" role="group" aria-label="模型判定筛选">
+          <button type="button" class="active" data-model-filter="All">全部</button>
+          <button type="button" data-model-filter="合格品">合格品</button>
+          <button type="button" data-model-filter="缺陷品">缺陷品</button>
+        </div>
+        <input id="modelPredictionFilter" type="hidden" value="All">
+      </div>
+      <label>
+        关键词
+        <input id="keyword" type="text" placeholder="例如：NG">
+      </label>
+      <label>
+        查找图片
+        <input id="imageSearch" type="text" placeholder="文件名 / 路径 / 备注">
+      </label>
+      <label>
+        列数
+        <input id="numCol" type="number" value="2" min="1" max="10">
+      </label>
+      <label>
+        行数
+        <input id="numRow" type="number" value="30" min="1" max="200">
+      </label>
+      <label>
+        缩放
+        <input id="scaleRatio" type="number" value="1" min="0.1" max="3" step="0.1">
+      </label>
+      <label class="checkbox-control">
+        Shuffle
+        <input id="shuffleImages" type="checkbox">
+      </label>
+      <label class="checkbox-control">
+        JSON优先
+        <input id="jsonFirst" type="checkbox">
+      </label>
+      <label>
+        页码
+        <input id="page" type="number" value="1" min="1">
+      </label>
+      <button id="loadBtn" type="button">渲染</button>
+    </section>
+
+    <section class="status" id="status">等待加载数据。</section>
+    <div class="workspace-layout">
+      <div class="gallery-column">
+        <section id="gallery" class="gallery" aria-label="检测图片列表"></section>
+        <nav class="bottom-pager" aria-label="底部分页">
+          <button id="prevPage" type="button">前一页</button>
+          <div class="pager-status">
+            <span>当前页：<strong id="currentPageText">1</strong></span>
+            <span>剩余页数：<strong id="remainingPagesText">0</strong></span>
+          </div>
+          <button id="nextPage" type="button">后一页</button>
+        </nav>
+        <div class="bulk-default-actions hidden" id="bulkDefaultActions">
+          <button id="bulkDefaultCorrect" type="button"></button>
+          <button id="undoBulkDefault" type="button" disabled>撤销上次批量默认标注</button>
+          <div id="bulkDefaultHint" class="bulk-default-hint"></div>
+        </div>
+      </div>
+      <aside class="stats-panel" aria-label="保存评价统计">
+        <div class="stats-head">
+          <h2>混淆矩阵</h2>
+          <button id="refreshStats" type="button">刷新</button>
+        </div>
+        <div class="stats-meta" id="statsMeta">等待统计。</div>
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th>预测缺陷品</th>
+              <th>预测合格品</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th>事实缺陷品</th>
+              <td>
+                <span class="matrix-label">TP</span>
+                <strong id="statTp">0</strong>
+              </td>
+              <td>
+                <span class="matrix-label">FN</span>
+                <strong id="statFn">0</strong>
+              </td>
+            </tr>
+            <tr>
+              <th>事实正常品</th>
+              <td>
+                <span class="matrix-label">FP</span>
+                <strong id="statFp">0</strong>
+              </td>
+              <td>
+                <span class="matrix-label">TN</span>
+                <strong id="statTn">0</strong>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="rate-grid">
+          <div>
+            <span>错检率</span>
+            <strong id="falsePositiveRate">-</strong>
+          </div>
+          <div>
+            <span>漏检率</span>
+            <strong id="falseNegativeRate">-</strong>
+          </div>
+          <div>
+            <span>HZ_错检率</span>
+            <strong id="hzFalsePositiveRate">-</strong>
+          </div>
+          <div>
+            <span>HZ_漏检率</span>
+            <strong id="hzFalseNegativeRate">-</strong>
+          </div>
+        </div>
+        <div class="stats-rule">
+          错检率 = FP / (FP + TN)<br>
+          漏检率 = FN / (FN + TP)<br>
+          HZ_错检率 = FP / (TP + FN + FP + TN)<br>
+          HZ_漏检率 = FN / (TP + FN + FP + TN)
+        </div>
+        <div class="light-stats">
+          <h3>按 Light 统计</h3>
+          <div id="lightStatsList" class="light-stats-list">暂无 light 统计。</div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <template id="cardTemplate">
+    <article class="image-card">
+      <div class="image-head">
+        <strong class="image-name"></strong>
+        <span class="save-state">未保存</span>
+      </div>
+      <div class="image-wrap">
+        <img alt="">
+        <canvas></canvas>
+      </div>
+      <div class="review-panel">
+        <div class="model-prediction">模型判定为：<strong data-model-prediction></strong></div>
+        <div class="review-title">对分类结果做人工打标</div>
+        <div class="segmented" role="group" aria-label="对分类结果做人工打标">
+          <button type="button" data-verdict="分类正确">分类正确</button>
+          <button type="button" data-verdict="分类错误">分类错误</button>
+        </div>
+        <div class="logic-section">
+          <div class="review-title">逻辑判断问题</div>
+          <div class="segmented logic" role="group" aria-label="逻辑判断问题">
+            <button type="button" data-green-defect="true">有缺陷但框是绿色的</button>
+          </div>
+        </div>
+        <div class="review-title">目标检测问题</div>
+        <div class="segmented defect" role="group" aria-label="目标检测问题">
+          <button type="button" data-issue="漏检">漏检</button>
+          <button type="button" data-issue="错检">错检</button>
+        </div>
+        <div class="region-tools">
+          <button type="button" data-action="undo">撤销当前框</button>
+          <button type="button" data-action="clear">清空当前框</button>
+          <span class="active-draw-hint">选择漏检、错检或绿色缺陷后，在图片上拖拽画框。</span>
+        </div>
+        <textarea placeholder="备注，可选"></textarea>
+        <div class="save-actions">
+          <button class="save-btn" type="button">保存评价</button>
+          <button class="undo-save-btn" type="button" data-action="undo-save" disabled>撤销本次保存</button>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

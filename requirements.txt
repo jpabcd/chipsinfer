@@ -1,0 +1,6 @@
+numpy
+Pillow
+opencv-python-headless
+gradio
+pandas
+matplotlib
