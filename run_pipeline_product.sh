@@ -24,7 +24,7 @@ CMD=(
   --output-json "$OUTPUT_DIR/json/main_inferer_dataloader_results.json"
   --predict-input-root "$OUTPUT_DIR/predict_input"
   --defect-report
-  --defect-report-path "$OUTPUT_DIR/csv/defect_report.csv"
+  --defect-report-path "$OUTPUT_DIR/csv/S26F30091-09.csv"
   --external-xy-csv-path "../../48AMA/imgs/S26F30091-09/S26F30091-09.csv"
   --wafer-map-path "$OUTPUT_DIR/plots/wafer_map_overall.png"
   --wafer-map-figsize "$WAFER_MAP_WIDTH" "$WAFER_MAP_HEIGHT"
