@@ -32,6 +32,7 @@ except ImportError:
 DEFAULT_CROP_WIDTH = 795
 DEFAULT_CROP_HEIGHT = 161
 DEFAULT_BROKEN_SUPPORTED_LIGHTS = ("light_1", "light_3")
+DEFAULT_NOLINE_SUPPORTED_LIGHTS = ("light_2",)
 _MODEL_CACHE: dict[tuple[Any, ...], tuple[Any, dict[int, str]]] = {}
 
 
@@ -40,6 +41,7 @@ class YoloInfererConfig:
     light_name: str
     weight: str
     broken_supported_lights: tuple[str, ...] = DEFAULT_BROKEN_SUPPORTED_LIGHTS
+    noline_supported_lights: tuple[str, ...] = DEFAULT_NOLINE_SUPPORTED_LIGHTS
     conf: float = 0.25
     iou: float = 0.45
     imgsz: int = 320
@@ -87,6 +89,9 @@ class CombinedYoloInferersConfig:
         shared = {
             "broken_supported_lights": tuple(
                 str(value) for value in config.get("broken_supported_lights", DEFAULT_BROKEN_SUPPORTED_LIGHTS)
+            ),
+            "noline_supported_lights": tuple(
+                str(value) for value in config.get("noline_supported_lights", DEFAULT_NOLINE_SUPPORTED_LIGHTS)
             ),
             "conf": float(config.get("conf", 0.25)),
             "iou": float(config.get("iou", 0.45)),
@@ -343,6 +348,7 @@ class YoloInferer:
         inverse_names = {name: class_id for class_id, name in self.model_names.items()}
         self.has_broken_logic = config.light_name in config.broken_supported_lights
         self.broken_class_id = inverse_names.get("broken") if self.has_broken_logic else None
+        self.is_noline_supported = config.light_name in config.noline_supported_lights
 
     def _ensure_draw_dir(self) -> None:
         self.draw_dir.mkdir(parents=True, exist_ok=True)
@@ -434,11 +440,14 @@ class YoloInferer:
             for box, class_id, confidence in zip(xyxy, class_ids, confidences):
                 width = max(0.0, float(box[2] - box[0]))
                 height = max(0.0, float(box[3] - box[1]))
+                class_name = self.model_names.get(int(class_id), str(int(class_id)))
+                if class_name == "noline" and not self.is_noline_supported:
+                    continue
                 detections.append(
                     YoloDetection(
                         box=tuple(float(value) for value in box),
                         class_id=int(class_id),
-                        class_name=self.model_names.get(int(class_id), str(int(class_id))),
+                        class_name=class_name,
                         confidence=float(confidence),
                         area_ratio=width * height / crop_area,
                     )

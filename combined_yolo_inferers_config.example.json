@@ -21,9 +21,12 @@
     "light_1",
     "light_3"
   ],
+  "noline_supported_lights": [
+    "light_2"
+  ],
   "crop_width": 795,
   "crop_height": 161,
-  "conf": 0.25,
+  "conf": 0.35,
   "iou": 0.45,
   "imgsz": 320,
   "device": "0",
