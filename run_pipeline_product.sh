@@ -12,7 +12,7 @@ WAFER_MAP_HEIGHT="${WAFER_MAP_HEIGHT:-16}"
 WAFER_MAP_CHIP_ASPECT="${WAFER_MAP_CHIP_ASPECT:-5.0}"
 
 CMD=(
-  python run_pipeline.py ../../48AMA/imgs/S26F30091-09
+  python run_pipeline.py ../../48AMA/imgs/S26G03085-10
   --batch-size 2
   --num-workers 8
   --persistent-workers
@@ -24,8 +24,8 @@ CMD=(
   --output-json "$OUTPUT_DIR/json/main_inferer_dataloader_results.json"
   --predict-input-root "$OUTPUT_DIR/predict_input"
   --defect-report
-  --defect-report-path "$OUTPUT_DIR/csv/S26F30091-09.csv"
-  --external-xy-csv-path "../../48AMA/imgs/S26F30091-09/S26F30091-09.csv"
+  --defect-report-path "$OUTPUT_DIR/csv/S26G03085-10.csv"
+  --external-xy-csv-path "../../48AMA/imgs/S26G03085-10/S26G03085-10.csv"
   --wafer-map-path "$OUTPUT_DIR/plots/wafer_map_overall.png"
   --wafer-map-figsize "$WAFER_MAP_WIDTH" "$WAFER_MAP_HEIGHT"
   --wafer-map-chip-aspect "$WAFER_MAP_CHIP_ASPECT"
