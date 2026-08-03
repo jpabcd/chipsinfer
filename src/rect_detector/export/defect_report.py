@@ -137,6 +137,16 @@ def export_defect_report(
     report_columns = ["MX", "MY"] + light_names + ["overall"]
     report_df = pd.DataFrame(rows, columns=report_columns)
 
+    if external_xy_csv_path:
+        external_xy_csv_path = _resolve_path(external_xy_csv_path)
+        report_df = _merge_xy(report_df=report_df, external_csv_path=external_xy_csv_path)
+        # Keep only chips that have a valid X/Y mapping in the external CSV.
+        # A left merge otherwise emits rows with empty X/Y coordinates.
+        report_df = report_df[
+            report_df["X"].astype(str).str.strip().ne("")
+            & report_df["Y"].astype(str).str.strip().ne("")
+        ].copy()
+
     total_chip_count = len(report_df)
     if total_chip_count == 0:
         yield_rate = 0.0
@@ -146,9 +156,7 @@ def export_defect_report(
     report_df["yield_rate"] = round(float(yield_rate), 6)
 
     if external_xy_csv_path:
-        external_xy_csv_path = _resolve_path(external_xy_csv_path)
-        report_df = _merge_xy(report_df=report_df, external_csv_path=external_xy_csv_path)
-        report_df["overall_binary"] = (report_df["overall"] == "NG").astype(int)
+        report_df["Bin"] = (report_df["overall"] == "NG").astype(int)
 
     defect_report_path.parent.mkdir(parents=True, exist_ok=True)
     report_df.to_csv(defect_report_path, index=False)

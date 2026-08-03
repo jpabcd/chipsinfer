@@ -2,40 +2,93 @@
   "lights": [
     {
       "name": "light_1",
-      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/yuanxin_yolo/yuanxin_yolo/0408_320n_light_0/weights/best.pt"
+      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/Detectors/rect_detector/my_weights/20260730-130552-18238086-light1/output/train/weights/best.pt",
+      "analyse": {
+        "可忽略-人工类 1":{
+          "enabled": false
+        },
+        "可忽略-人工类 2":{"area": {">": 400}}
+      },
+        "crop_width": 795,
+        "crop_height": 161,
+        "conf": 0.35,
+        "iou": 0.7,
+        "imgsz": 320,
+        "device": "0",
+        "quantize": 16,
+        "use_engine": true,
+        "yolo_batch": 256,
+        "yolo_stream": true,
+        "yolo_stream_batch": 128,
+        "yolo_warmup": 100,
+        "verbose": false
     },
     {
       "name": "light_2",
-      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/yuanxin_yolo/yuanxin_yolo/0408_320n_light_1/weights/best.pt"
+      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/Detectors/rect_detector/my_weights/20260730-173533-069dfdef-light2/output/train/weights/best.pt",
+      "analyse": {
+        "可忽略-曝点":{"area": {">": 400}}
+      },
+        "crop_width": 795,
+        "crop_height": 161,
+        "conf": 0.35,
+        "iou": 0.7,
+        "imgsz": 320,
+        "device": "0",
+        "quantize": 16,
+        "use_engine": true,
+        "yolo_batch": 256,
+        "yolo_stream": true,
+        "yolo_stream_batch": 128,
+        "yolo_warmup": 100,
+        "verbose": false
     },
     {
       "name": "light_3",
-      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/yuanxin_yolo/yuanxin_yolo/0408_320n_light_2/weights/best.pt"
+      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/Detectors/rect_detector/my_weights/20260802-190502-4ebc8e9e-light3/output/train/weights/best.pt",
+      "analyse": {
+          "中间线": {
+            "enabled": false
+          },
+        "可忽略-曝点":{"area": {">": 400}}
+      },
+        "crop_width": 795,
+        "crop_height": 161,
+        "conf": 0.35,
+        "iou": 0.7,
+        "imgsz": 320,
+        "device": "0",
+        "quantize": null,
+        "use_engine": true,
+        "yolo_batch": 256,
+        "yolo_stream": true,
+        "yolo_stream_batch": 128,
+        "yolo_warmup": 100,
+        "verbose": false
     },
     {
       "name": "light_4",
-      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/yuanxin_yolo/yuanxin_yolo/0429_320n_light_3_v2/weights/best.pt"
+      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/Detectors/rect_detector/my_weights/20260802-175347-def1e94a-light4/output/train/weights/best.pt",
+      "analyse": {
+          "中间线": {
+            "enabled": false
+          },
+          "细线问题":{"confidence": {">": 0.5}},
+            "可忽略-曝点":{"area": {">": 400}}
+          },
+          "crop_width": 795,
+          "crop_height": 161,
+          "conf": 0.35,
+          "iou": 0.7,
+          "imgsz": 320,
+          "device": "0",
+          "quantize": null,
+          "use_engine": true,
+          "yolo_batch": 256,
+          "yolo_stream": true,
+          "yolo_stream_batch": 128,
+          "yolo_warmup": 100,
+            "verbose": false
     }
-  ],
-  "broken_supported_lights": [
-    "light_1",
-    "light_3"
-  ],
-  "noline_supported_lights": [
-    "light_2"
-  ],
-  "crop_width": 795,
-  "crop_height": 161,
-  "conf": 0.35,
-  "iou": 0.45,
-  "imgsz": 320,
-  "device": "0",
-  "quantize": 16,
-  "use_engine": true,
-  "yolo_batch": 256,
-  "yolo_stream": true,
-  "yolo_stream_batch": 128,  
-  "yolo_warmup": 100,
-  "area_ratio_threshold": 0.02,
-  "verbose": false
+  ]
 }

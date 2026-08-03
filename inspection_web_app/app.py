@@ -375,7 +375,9 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
                     "width": 0,
                     "height": 0,
                     "modelPrediction": current_light_prediction,
-                    "modelReason": analysed.get("decision_reason", ""),
+                    "modelReason": ", ".join(analysed.get("decision_reason", []))
+                    if isinstance(analysed.get("decision_reason"), list)
+                    else analysed.get("decision_reason", ""),
                     "lightType": light_name,
                     "sampleId": sample.get("sample_id", ""),
                     "numStr": sample.get("num_str", ""),

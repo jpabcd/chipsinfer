@@ -278,15 +278,17 @@ class MainInferer:
             return "INVALID", "", "Inconsistent_Crop_Box", None
 
         predictions = [prediction for prediction in light_predictions.values() if prediction is not None]
-        broken_predictions = [prediction for prediction in predictions if prediction.has_broken]
-        if broken_predictions:
-            trigger = max(broken_predictions, key=lambda prediction: prediction.broken_conf)
-            return "NG", "broken", "Broken_Class", trigger.light_name
-
         ng_predictions = [prediction for prediction in predictions if prediction.pred_status == "NG"]
         if ng_predictions:
-            trigger = max(ng_predictions, key=lambda prediction: prediction.max_area_ratio)
-            return "NG", trigger.pred_class, trigger.decision_reason, trigger.light_name
+            trigger = ng_predictions[0]
+            classes = set().union(*(prediction.pred_class for prediction in ng_predictions))
+            reasons = set().union(*(prediction.decision_reason for prediction in ng_predictions))
+            return (
+                "NG",
+                ",".join(sorted(classes)),
+                ",".join(sorted(reasons)),
+                trigger.light_name,
+            )
         return "OK", "OK", "All_Lights_OK", None
 
     @staticmethod

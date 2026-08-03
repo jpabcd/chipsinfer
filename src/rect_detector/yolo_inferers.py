@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import operator
 import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -31,17 +32,24 @@ except ImportError:
 
 DEFAULT_CROP_WIDTH = 795
 DEFAULT_CROP_HEIGHT = 161
-DEFAULT_BROKEN_SUPPORTED_LIGHTS = ("light_1", "light_3")
-DEFAULT_NOLINE_SUPPORTED_LIGHTS = ("light_2",)
 _MODEL_CACHE: dict[tuple[Any, ...], tuple[Any, dict[int, str]]] = {}
+
+AnalyseConfig = Mapping[str, Mapping[str, Any]]
+_ANALYSE_OPERATORS = {
+    ">": operator.gt,
+    ">=": operator.ge,
+    "<": operator.lt,
+    "<=": operator.le,
+    "==": operator.eq,
+}
+_ANALYSE_FIELDS = {"area", "area_ratio", "width", "height", "confidence"}
 
 
 @dataclass(frozen=True)
 class YoloInfererConfig:
     light_name: str
     weight: str
-    broken_supported_lights: tuple[str, ...] = DEFAULT_BROKEN_SUPPORTED_LIGHTS
-    noline_supported_lights: tuple[str, ...] = DEFAULT_NOLINE_SUPPORTED_LIGHTS
+    analyse: AnalyseConfig = field(default_factory=dict)
     conf: float = 0.25
     iou: float = 0.45
     imgsz: int = 320
@@ -52,7 +60,6 @@ class YoloInfererConfig:
     yolo_stream: bool = True
     yolo_stream_batch: int = 128
     yolo_warmup: int = 100
-    area_ratio_threshold: float = 0.02
     crop_width: int = DEFAULT_CROP_WIDTH
     crop_height: int = DEFAULT_CROP_HEIGHT
     draw: bool = False
@@ -86,13 +93,7 @@ class CombinedYoloInferersConfig:
             raise ValueError(f"light_name values must be unique: {names}")
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any]) -> "CombinedYoloInferersConfig":
-        shared = {
-            "broken_supported_lights": tuple(
-                str(value) for value in config.get("broken_supported_lights", DEFAULT_BROKEN_SUPPORTED_LIGHTS)
-            ),
-            "noline_supported_lights": tuple(
-                str(value) for value in config.get("noline_supported_lights", DEFAULT_NOLINE_SUPPORTED_LIGHTS)
-            ),
+        defaults = {
             "conf": float(config.get("conf", 0.25)),
             "iou": float(config.get("iou", 0.45)),
             "imgsz": int(config.get("imgsz", 320)),
@@ -103,7 +104,6 @@ class CombinedYoloInferersConfig:
             "yolo_stream": bool(config.get("yolo_stream", True)),
             "yolo_stream_batch": int(config.get("yolo_stream_batch", 128)),
             "yolo_warmup": int(config.get("yolo_warmup", 100)),
-            "area_ratio_threshold": float(config.get("area_ratio_threshold", 0.02)),
             "crop_width": int(config.get("crop_width", DEFAULT_CROP_WIDTH)),
             "crop_height": int(config.get("crop_height", DEFAULT_CROP_HEIGHT)),
             "draw": bool(config.get("draw", False)),
@@ -118,11 +118,26 @@ class CombinedYoloInferersConfig:
         for index, light in enumerate(raw_lights):
             if not isinstance(light, Mapping):
                 raise ValueError(f"lights[{index}] must be an object")
+            light_options = {
+                key: light.get(key, default)
+                for key, default in defaults.items()
+            }
+            light_options["conf"] = float(light_options["conf"])
+            light_options["iou"] = float(light_options["iou"])
+            light_options["imgsz"] = int(light_options["imgsz"])
+            light_options["yolo_batch"] = int(light_options["yolo_batch"])
+            light_options["yolo_stream_batch"] = int(light_options["yolo_stream_batch"])
+            light_options["yolo_warmup"] = int(light_options["yolo_warmup"])
+            light_options["crop_width"] = int(light_options["crop_width"])
+            light_options["crop_height"] = int(light_options["crop_height"])
+            for key in ("use_engine", "yolo_stream", "draw", "save_predict_input", "verbose"):
+                light_options[key] = bool(light_options[key])
             lights.append(
                 YoloInfererConfig(
                     light_name=str(light.get("name", "")).strip(),
                     weight=str(light.get("weight", "")).strip(),
-                    **shared,
+                    analyse=light.get("analyse", {}),
+                    **light_options,
                 )
             )
         return cls(lights=tuple(lights))
@@ -151,11 +166,12 @@ class CropBox:
 
 @dataclass(frozen=True)
 class YoloDetection:
-    box: tuple[float, float, float, float]
+    box: tuple[float, float, float, float] # (x1, y1, x2, y2)
     class_id: int
     class_name: str
     confidence: float
     area_ratio: float
+    area: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -164,16 +180,9 @@ class YoloPrediction:
     aligned_rect: AlignedRect
     crop_box: CropBox
     pred_status: str
-    pred_class: str
-    decision_reason: str
+    pred_class: set[str]
+    decision_reason: set[str]
     detections: tuple[YoloDetection, ...]
-    best_class: str = ""
-    best_conf: float = 0.0
-    max_area_class: str = ""
-    max_area_conf: float = 0.0
-    max_area_ratio: float = 0.0
-    has_broken: bool = False
-    broken_conf: float = 0.0
     yolo_ms: float = 0.0
 
     @property
@@ -188,6 +197,8 @@ class YoloPrediction:
         data = asdict(self)
         data["rect_id"] = self.rect_id
         data["mechanical_index"] = self.mechanical_index
+        data["pred_class"] = sorted(self.pred_class)
+        data["decision_reason"] = sorted(self.decision_reason)
         return data
 
 
@@ -310,6 +321,102 @@ def _load_model(config: YoloInfererConfig) -> tuple[Any, dict[int, str]]:
     return model, _normalize_model_names(model)
 
 
+@dataclass(frozen=True)
+class YoloAnalysisResult:
+    matched_boxes: tuple[YoloDetection, ...]
+    matched_classes: set[str]
+
+
+class YoloResultAnalyser:
+    """Apply dynamically configured class rules to extracted YOLO detections."""
+
+    def __init__(self, analyse_config: AnalyseConfig | Mapping[str, Any] | None = None) -> None:
+        raw_config = analyse_config or {}
+        if not isinstance(raw_config, Mapping):
+            raise ValueError("analyse must be an object mapping class names to rule objects")
+
+        self.rules: dict[str, tuple[tuple[str, str, float], ...]] = {}
+        self.disabled_classes: set[str] = set()
+        for class_name, raw_rules in raw_config.items():
+            if not isinstance(class_name, str) or not class_name.strip():
+                raise ValueError("analyse class names must be non-empty strings")
+            if not isinstance(raw_rules, Mapping):
+                raise ValueError(f"analyse[{class_name!r}] must be an object")
+
+            normalized_class_name = class_name.strip()
+            enabled = raw_rules.get("enabled", True)
+            if not isinstance(enabled, bool):
+                raise ValueError(f"analyse[{class_name!r}].enabled must be boolean")
+            if not enabled:
+                self.disabled_classes.add(normalized_class_name)
+                self.rules[normalized_class_name] = ()
+                continue
+
+            normalized_rules: list[tuple[str, str, float]] = []
+            for field_name, raw_condition in raw_rules.items():
+                if field_name == "enabled":
+                    continue
+                if field_name not in _ANALYSE_FIELDS:
+                    raise ValueError(
+                        f"unsupported analyse field {field_name!r} for class {class_name!r}; "
+                        f"expected one of {sorted(_ANALYSE_FIELDS)}"
+                    )
+                if not isinstance(raw_condition, Mapping) or len(raw_condition) != 1:
+                    raise ValueError(
+                        f"analyse[{class_name!r}][{field_name!r}] must contain exactly one operator"
+                    )
+                comparison, threshold = next(iter(raw_condition.items()))
+                if comparison not in _ANALYSE_OPERATORS:
+                    raise ValueError(
+                        f"unsupported analyse operator {comparison!r}; "
+                        f"expected one of {sorted(_ANALYSE_OPERATORS)}"
+                    )
+                if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+                    raise ValueError(
+                        f"analyse[{class_name!r}][{field_name!r}] threshold must be numeric"
+                    )
+                normalized_rules.append((field_name, comparison, float(threshold)))
+            self.rules[normalized_class_name] = tuple(normalized_rules)
+
+        self.minimum_confidence = min(
+            (threshold for rules in self.rules.values() for field_name, _, threshold in rules if field_name == "confidence"),
+            default=None,
+        )
+
+    def __call__(self, detections: Sequence[YoloDetection]) -> YoloAnalysisResult:
+        matched_boxes: list[YoloDetection] = []
+        matched_classes: set[str] = set()
+        for detection in detections:
+            if detection.class_name in self.disabled_classes:
+                # print('detection.class_name:', detection.class_name)
+                continue
+            rules = self.rules.get(detection.class_name)
+            if rules is None:
+                # No rule means no restriction: any YOLO box of this class
+                # is considered a defect by default.
+                matched_boxes.append(detection)
+                matched_classes.add(detection.class_name)
+                continue
+            if not rules:
+                matched_boxes.append(detection)
+                matched_classes.add(detection.class_name)
+                continue
+            values = {
+                "area": detection.area,
+                "area_ratio": detection.area_ratio,
+                "width": max(0.0, detection.box[2] - detection.box[0]),
+                "height": max(0.0, detection.box[3] - detection.box[1]),
+                "confidence": detection.confidence,
+            }
+            if all(_ANALYSE_OPERATORS[comparison](values[field_name], threshold) for field_name, comparison, threshold in rules):
+                matched_boxes.append(detection)
+                matched_classes.add(detection.class_name)
+        return YoloAnalysisResult(
+            matched_boxes=tuple(matched_boxes),
+            matched_classes=matched_classes,
+        )
+
+
 class YoloInferer:
     """Run one light-specific YOLO model on fixed-size crops from an AlignResult."""
 
@@ -320,6 +427,7 @@ class YoloInferer:
         model_names: Mapping[int, str] | None = None,
     ) -> None:
         self.config = config
+        self.result_analyser = YoloResultAnalyser(config.analyse)
         if model is None:
             cache_key = (
                 config.weight,
@@ -345,11 +453,6 @@ class YoloInferer:
             self._ensure_draw_dir()
         if self.save_predict_input:
             self._ensure_predict_input_dir()
-        inverse_names = {name: class_id for class_id, name in self.model_names.items()}
-        self.has_broken_logic = config.light_name in config.broken_supported_lights
-        self.broken_class_id = inverse_names.get("broken") if self.has_broken_logic else None
-        self.is_noline_supported = config.light_name in config.noline_supported_lights
-
     def _ensure_draw_dir(self) -> None:
         self.draw_dir.mkdir(parents=True, exist_ok=True)
 
@@ -375,7 +478,12 @@ class YoloInferer:
     ) -> Iterable[Any]:
         kwargs = {
             "source": images,
-            "conf": self.config.conf,
+            "conf": min(
+                self.config.conf,
+                self.result_analyser.minimum_confidence
+                if self.result_analyser.minimum_confidence is not None
+                else self.config.conf,
+            ),
             "iou": self.config.iou,
             "imgsz": self.config.imgsz,
             "device": self.config.device,
@@ -440,31 +548,22 @@ class YoloInferer:
             for box, class_id, confidence in zip(xyxy, class_ids, confidences):
                 width = max(0.0, float(box[2] - box[0]))
                 height = max(0.0, float(box[3] - box[1]))
+                region_area = width * height
                 class_name = self.model_names.get(int(class_id), str(int(class_id)))
-                if class_name == "noline" and not self.is_noline_supported:
-                    continue
                 detections.append(
                     YoloDetection(
                         box=tuple(float(value) for value in box),
                         class_id=int(class_id),
                         class_name=class_name,
                         confidence=float(confidence),
-                        area_ratio=width * height / crop_area,
+                        area_ratio=region_area / crop_area,
+                        area=region_area,
                     )
                 )
 
-        best = max(detections, key=lambda item: item.confidence, default=None)
-        largest = max(detections, key=lambda item: item.area_ratio, default=None)
-        broken = [item for item in detections if item.class_id == self.broken_class_id]
-        has_broken = bool(broken)
-        if not detections:
-            status, pred_class, reason = "OK", "OK", "NoBox"
-        elif has_broken:
-            status, pred_class, reason = "NG", "broken", "Broken_Class"
-        elif largest is not None and largest.area_ratio >= self.config.area_ratio_threshold:
-            status, pred_class, reason = "NG", largest.class_name, "Area"
-        else:
-            status, pred_class, reason = "OK", "OK", "AreaBelowThreshold"
+        analysis = self.result_analyser(detections)
+        pred_class = analysis.matched_classes
+        status = "NG" if analysis.matched_boxes else "OK"
 
         speed = getattr(result, "speed", {}) or {}
         yolo_ms = sum(float(speed.get(key, 0.0)) for key in ("preprocess", "inference", "postprocess"))
@@ -474,15 +573,8 @@ class YoloInferer:
             crop_box=crop_box,
             pred_status=status,
             pred_class=pred_class,
-            decision_reason=reason,
+            decision_reason=set(pred_class),
             detections=tuple(detections),
-            best_class=best.class_name if best else "",
-            best_conf=best.confidence if best else 0.0,
-            max_area_class=largest.class_name if largest else "",
-            max_area_conf=largest.confidence if largest else 0.0,
-            max_area_ratio=largest.area_ratio if largest else 0.0,
-            has_broken=has_broken,
-            broken_conf=max((item.confidence for item in broken), default=0.0),
             yolo_ms=yolo_ms,
         )
 
@@ -792,9 +884,11 @@ __all__ = [
     "LightYoloResult",
     "SkippedCrop",
     "YoloDetection",
+    "YoloAnalysisResult",
     "YoloInferer",
     "YoloInfererConfig",
     "YoloPrediction",
+    "YoloResultAnalyser",
     "combined_yolo_inferers",
     "yolo_inferer",
 ]

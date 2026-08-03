@@ -13,8 +13,8 @@ def plot_wafer_map(
 ) -> Path:
     """Plot the chip results as a red/green wafer map.
 
-    ``overall_binary`` must contain 0 for OK and 1 for NG. Rows without
-    numeric X/Y coordinates are retained in the CSV but omitted from the plot.
+    ``Bin`` must contain 0 for OK and 1 for NG. Rows without numeric X/Y
+    coordinates are omitted from the plot.
     """
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
@@ -22,7 +22,7 @@ def plot_wafer_map(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    required_columns = {"X", "Y", "overall_binary"}
+    required_columns = {"X", "Y", "Bin"}
     missing = sorted(required_columns.difference(report_df.columns))
     if missing:
         raise ValueError(
@@ -32,11 +32,9 @@ def plot_wafer_map(
     plot_df = report_df.copy()
     plot_df["X"] = pd.to_numeric(plot_df["X"], errors="coerce")
     plot_df["Y"] = pd.to_numeric(plot_df["Y"], errors="coerce")
-    plot_df["overall_binary"] = pd.to_numeric(
-        plot_df["overall_binary"], errors="coerce"
-    )
-    plot_df = plot_df.dropna(subset=["X", "Y", "overall_binary"])
-    plot_df = plot_df[plot_df["overall_binary"].isin([0, 1])]
+    plot_df["Bin"] = pd.to_numeric(plot_df["Bin"], errors="coerce")
+    plot_df = plot_df.dropna(subset=["X", "Y", "Bin"])
+    plot_df = plot_df[plot_df["Bin"].isin([0, 1])]
 
     if len(figsize) != 2 or any(float(value) <= 0 for value in figsize):
         raise ValueError(f"figsize must contain two positive values, got {figsize!r}")
@@ -47,8 +45,8 @@ def plot_wafer_map(
         figsize=(float(figsize[0]), float(figsize[1])),
         constrained_layout=True,
     )
-    ok_df = plot_df[plot_df["overall_binary"] == 0]
-    ng_df = plot_df[plot_df["overall_binary"] == 1]
+    ok_df = plot_df[plot_df["Bin"] == 0]
+    ng_df = plot_df[plot_df["Bin"] == 1]
 
     ax.scatter(ok_df["X"], ok_df["Y"], c="green", marker="s", s=36)
     ax.scatter(ng_df["X"], ng_df["Y"], c="red", marker="s", s=36)

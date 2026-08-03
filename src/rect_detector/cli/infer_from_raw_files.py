@@ -197,15 +197,8 @@ def _build_chip_record(
             "raw_trt_output": prediction.to_dict(),
             "analyzed_output": {
                 "pred_status": prediction.pred_status,
-                "pred_class": prediction.pred_class,
-                "decision_reason": prediction.decision_reason,
-                "best_class": prediction.best_class,
-                "best_conf": prediction.best_conf,
-                "max_area_class": prediction.max_area_class,
-                "max_area_conf": prediction.max_area_conf,
-                "max_area_ratio": prediction.max_area_ratio,
-                "has_broken": prediction.has_broken,
-                "broken_conf": prediction.broken_conf,
+                "pred_class": sorted(prediction.pred_class),
+                "decision_reason": sorted(prediction.decision_reason),
                 "yolo_ms": prediction.yolo_ms,
             },
         }
