@@ -55,6 +55,18 @@ let clearMatrixFilterButton = null;
 let activeMatrixFilterText = null;
 let pendingBulkUndoEntries = [];
 
+// One resize listener for the whole page is substantially cheaper than one
+// listener per card, especially when a page contains dozens of cards.
+window.addEventListener("resize", () => {
+  for (const { node, state } of currentPageCards) {
+    const img = node.querySelector("img");
+    const canvas = node.querySelector("canvas");
+    if (!img || !canvas || !img.complete) continue;
+    syncCanvasSize(img, canvas);
+    drawRegions(canvas, state);
+  }
+});
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -450,11 +462,6 @@ function renderCard(item, container = gallery) {
     syncCanvasSize(img, canvas);
     drawRegions(canvas, state);
   });
-  window.addEventListener("resize", () => {
-    syncCanvasSize(img, canvas);
-    drawRegions(canvas, state);
-  });
-
   node.querySelectorAll("[data-verdict]").forEach((button) => {
     button.addEventListener("click", () => {
       state.verdict = button.dataset.verdict;

@@ -40,6 +40,8 @@ INFER_MODEL_PREDICTION_MAP = {
 DEFAULT_RESULT_JSON = APP_DIR.parent / "outputs" / "json" / "main_inferer_dataloader_results.json"
 IMAGE_META_CACHE = {}
 INFERENCE_ITEMS_CACHE = {}
+INFERENCE_BASE_CACHE = {}
+INFERENCE_CACHE_LOCK = threading.RLock()
 PROJECT_DIR = APP_DIR.parent
 CONFIGURED_RESULT_JSON = ""
 INFERENCE_DISK_CACHE_DIR = APP_DIR / ".inference_cache"
@@ -253,6 +255,98 @@ def compact_raw_output(raw_output):
     }
 
 
+def _load_inference_base_items(result_json_path, project_dir, stamp):
+    """Parse and normalize the result JSON once, independent of UI filters."""
+    result_json_path = resolve_user_supplied_path(result_json_path)
+    base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v2")
+    with INFERENCE_CACHE_LOCK:
+        cached = INFERENCE_BASE_CACHE.get(base_key)
+    if cached is not None:
+        return cached
+
+    if orjson is not None:
+        payload = orjson.loads(result_json_path.read_bytes())
+    else:
+        with result_json_path.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+
+    items = []
+    for sample in payload.get("samples", []):
+        for chip in sample.get("chips", []):
+            yolo_block = chip.get("yolo") or {}
+            for light_name, light_data in yolo_block.items():
+                raw = (
+                    light_data.get("raw_trt_output")
+                    or light_data.get("raw_output")
+                    or light_data.get("raw")
+                )
+                image_reference = (
+                    light_data.get("path_")
+                    or light_data.get("predict_input")
+                    or light_data.get("image_path")
+                    or light_data.get("path")
+                )
+                if not isinstance(raw, dict) or not image_reference:
+                    continue
+
+                image_path = resolve_result_path(result_json_path, image_reference, project_dir)
+                if not project_dir and not image_path.is_file():
+                    continue
+
+                analysed = (
+                    light_data.get("analyzed_output")
+                    or light_data.get("analyse_output")
+                    or {}
+                )
+                current_light_prediction = INFER_MODEL_PREDICTION_MAP.get(
+                    analysed.get("pred_status"), "未知"
+                )
+                chip_key = chip.get("chip_key", {}) or {}
+                mechanical = chip.get("mechanical_columns") or {}
+                searchable = " ".join(map(str, [
+                    image_path.name,
+                    sample.get("sample_id", ""),
+                    sample.get("num_str", ""),
+                    light_name,
+                    mechanical.get("MX", ""),
+                    mechanical.get("MY", ""),
+                    (chip.get("final") or {}).get("status", ""),
+                    (chip.get("final") or {}).get("class", ""),
+                    (chip.get("final") or {}).get("reason", ""),
+                    chip_key.get("nImageNum", ""),
+                    chip_key.get("nIndex", ""),
+                ])).lower()
+
+                original_path = str(image_path.resolve())
+                MODEL_PREDICTION_BY_PATH[original_path] = current_light_prediction
+                MODEL_PREDICTION_BY_PATH[os.path.normcase(original_path)] = current_light_prediction
+                items.append({
+                    "id": quote(original_path, safe=""),
+                    "name": image_path.name,
+                    "originalPath": original_path,
+                    "displayPath": original_path,
+                    "imageUrl": "/api/image?path=" + quote(original_path, safe=""),
+                    "width": 0,
+                    "height": 0,
+                    "modelPrediction": current_light_prediction,
+                    "modelReason": ", ".join(analysed.get("decision_reason", []))
+                    if isinstance(analysed.get("decision_reason"), list)
+                    else analysed.get("decision_reason", ""),
+                    "lightType": light_name,
+                    "sampleId": sample.get("sample_id", ""),
+                    "numStr": sample.get("num_str", ""),
+                    "chipKey": chip_key,
+                    "predictionOverlay": {"detection": [], "analyse": []},
+                    "_searchText": searchable,
+                    "_rawOutput": compact_raw_output(raw),
+                    "_analysedOutput": analysed,
+                })
+
+    with INFERENCE_CACHE_LOCK:
+        INFERENCE_BASE_CACHE[base_key] = items
+    return items
+
+
 def load_inference_items(result_json_path, light_type, model_prediction_filter, keyword, image_search, project_dir=None):
     result_json_path = resolve_user_supplied_path(result_json_path)
     try:
@@ -262,6 +356,7 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
         stamp = None
 
     cache_key = (
+        "filtered-v2",
         str(result_json_path),
         stamp,
         light_type,
@@ -297,95 +392,20 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
     except (OSError, EOFError, pickle.PickleError, ValueError):
         pass
 
-    if orjson is not None:
-        payload = orjson.loads(result_json_path.read_bytes())
-    else:
-        with result_json_path.open("r", encoding="utf-8") as file:
-            payload = json.load(file)
-
     keyword_lower = (keyword or "").lower()
     search_lower = (image_search or "").lower()
+    base_items = _load_inference_base_items(result_json_path, project_dir, stamp)
     items = []
-
-    for sample in payload.get("samples", []):
-        for chip in sample.get("chips", []):
-            yolo_block = chip.get("yolo") or {}
-            for light_name, light_data in yolo_block.items():
-                if light_type != "All" and light_name != light_type:
-                    continue
-
-                raw = (
-                    light_data.get("raw_trt_output")
-                    or light_data.get("raw_output")
-                    or light_data.get("raw")
-                )
-                image_reference = (
-                    light_data.get("path_")
-                    or light_data.get("predict_input")
-                    or light_data.get("image_path")
-                    or light_data.get("path")
-                )
-                if not isinstance(raw, dict) or not image_reference:
-                    continue
-
-                image_path = resolve_result_path(result_json_path, image_reference, project_dir)
-                # The explicit image root has already been validated at
-                # startup. Defer per-image existence checks to /api/image;
-                # checking 100k+ files here makes the first page slow.
-                if not project_dir and not image_path.is_file():
-                    continue
-
-                analysed = (
-                    light_data.get("analyzed_output")
-                    or light_data.get("analyse_output")
-                    or {}
-                )
-                current_light_prediction = INFER_MODEL_PREDICTION_MAP.get(analysed.get("pred_status"), "未知")
-                if model_prediction_filter != "All" and current_light_prediction != model_prediction_filter:
-                    continue
-
-                searchable = " ".join(map(str, [
-                    image_path.name,
-                    sample.get("sample_id", ""),
-                    sample.get("num_str", ""),
-                    light_name,
-                    (chip.get("mechanical_columns") or {}).get("MX", ""),
-                    (chip.get("mechanical_columns") or {}).get("MY", ""),
-                    ((chip.get("final") or {}).get("status", "")),
-                    ((chip.get("final") or {}).get("class", "")),
-                    ((chip.get("final") or {}).get("reason", "")),
-                    (chip.get("chip_key", {}) or {}).get("nImageNum", ""),
-                    (chip.get("chip_key", {}) or {}).get("nIndex", ""),
-                ])).lower()
-
-                if keyword_lower and keyword_lower not in image_path.name.lower():
-                    continue
-                if search_lower and search_lower not in searchable:
-                    continue
-
-                original_path = str(image_path.resolve())
-                MODEL_PREDICTION_BY_PATH[original_path] = current_light_prediction
-                MODEL_PREDICTION_BY_PATH[os.path.normcase(original_path)] = current_light_prediction
-                items.append({
-                    "id": quote(original_path, safe=""),
-                    "name": image_path.name,
-                    "originalPath": original_path,
-                    "displayPath": original_path,
-                    "imageUrl": "/api/image?path=" + quote(original_path, safe=""),
-                    "width": 0,
-                    "height": 0,
-                    "modelPrediction": current_light_prediction,
-                    "modelReason": ", ".join(analysed.get("decision_reason", []))
-                    if isinstance(analysed.get("decision_reason"), list)
-                    else analysed.get("decision_reason", ""),
-                    "lightType": light_name,
-                    "sampleId": sample.get("sample_id", ""),
-                    "numStr": sample.get("num_str", ""),
-                    "chipKey": chip.get("chip_key", {}),
-                    "predictionOverlay": {"detection": [], "analyse": []},
-                    "_rawOutput": compact_raw_output(raw),
-                    "_analysedOutput": analysed,
-                })
+    for base_item in base_items:
+        if light_type != "All" and base_item.get("lightType") != light_type:
+            continue
+        if model_prediction_filter != "All" and base_item.get("modelPrediction") != model_prediction_filter:
+            continue
+        if keyword_lower and keyword_lower not in base_item.get("name", "").lower():
+            continue
+        if search_lower and search_lower not in base_item.get("_searchText", ""):
+            continue
+        items.append(base_item)
 
     INFERENCE_ITEMS_CACHE[cache_key] = items
     try:
@@ -699,6 +719,8 @@ def shuffle_paths(paths, seed):
 
 
 def json_bytes(payload):
+    if orjson is not None:
+        return orjson.dumps(payload)
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
@@ -750,6 +772,7 @@ class InspectionHandler(BaseHTTPRequestHandler):
         content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=3600")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
