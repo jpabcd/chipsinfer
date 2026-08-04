@@ -385,7 +385,11 @@ async function loadImages() {
     const modelFilterText = data.modelPredictionFilter && data.modelPredictionFilter !== "All" ? ` | 模型判定：${data.modelPredictionFilter}` : "";
     const matrixFilterText = data.confusionCell ? ` | 矩阵筛选：${data.confusionLight || "全部 light"} / ${data.confusionCell}` : "";
     setStatus(`状态：总计 ${data.total} 张 | 当前第 ${data.page} / ${data.totalPages} 页 | 当前 Batch 分辨率 ${data.batchWidth}x${data.batchHeight}${shuffleText}${jsonFirstText}${modelFilterText}${searchText}${matrixFilterText} | 数据源 ${data.baseDir || "-"}`);
-    data.items.forEach(renderCard);
+    // Build the whole page off-DOM, then attach it once to avoid repeated
+    // layout/repaint work when a page contains many cards.
+    const fragment = document.createDocumentFragment();
+    data.items.forEach((item) => renderCard(item, fragment));
+    gallery.appendChild(fragment);
     updateBulkDefaultAction();
   } catch (error) {
     setStatus(error.message, true);
@@ -393,7 +397,7 @@ async function loadImages() {
   }
 }
 
-function renderCard(item) {
+function renderCard(item, container = gallery) {
   const node = template.content.firstElementChild.cloneNode(true);
   const img = node.querySelector("img");
   const canvas = node.querySelector("canvas");
@@ -435,6 +439,8 @@ function renderCard(item) {
       modelPredictionBar.classList.add("defective");
     }
   }
+  img.loading = "lazy";
+  img.decoding = "async";
   img.src = item.imageUrl;
   img.alt = item.name;
   noteInput.value = state.note;
@@ -635,7 +641,7 @@ function renderCard(item) {
   }
 
   updateButtons(node, state);
-  gallery.appendChild(node);
+  container.appendChild(node);
   currentPageCards.push({ node, state, stateLabel });
 }
 

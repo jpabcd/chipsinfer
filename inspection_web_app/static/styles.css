@@ -203,6 +203,11 @@ textarea {
   align-items: start;
 }
 
+.image-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 520px 760px;
+}
+
 .gallery-column {
   min-width: 0;
 }
