@@ -68,7 +68,8 @@ let activeMatrixFilterText = null;
 let pendingBulkUndoEntries = [];
 let jsonOptionsFromTxt = [];
 let rememberedJsons = [];
-let clearInferenceCacheNextLoad = false;
+let imageRequestId = 0;
+let statsRequestId = 0;
 
 // One resize listener for the whole page is substantially cheaper than one
 // listener per card, especially when a page contains dozens of cards.
@@ -319,9 +320,11 @@ function statsBlock(label, stats) {
 
 async function loadStats() {
   if (!statsEls.meta) return;
+  const requestId = ++statsRequestId;
   try {
     const response = await fetch("/api/stats");
     const data = await response.json();
+    if (requestId !== statsRequestId) return;
     if (!response.ok) throw new Error(data.error || "统计加载失败。");
 
     statsEls.tp.textContent = data.tp;
@@ -420,7 +423,6 @@ function getParams() {
     shuffle: controls.shuffleImages.checked ? "true" : "false",
     shuffle_seed: shuffleSeed,
     json_first: controls.jsonFirst.checked ? "true" : "false",
-    clear_cache: clearInferenceCacheNextLoad && controls.resultJsonClearCache?.checked ? "true" : "false",
     confusion_cell: confusionFilter.cell,
     confusion_light: confusionFilter.light,
     page: controls.page.value || "1",
@@ -583,7 +585,6 @@ function renderJsonOptions(items = []) {
       controls.resultJson.value = item.path || "";
       controls.page.value = "1";
       shuffleSeed = String(Date.now());
-      clearInferenceCacheNextLoad = true;
       rememberJsonPath(item.path || "");
       updateImagePathExportLink();
       updateAnnotationsExportLink();
@@ -644,6 +645,7 @@ function restoreJsonPreference() {
 }
 
 async function loadImages() {
+  const requestId = ++imageRequestId;
   const currentResultJson = controls.resultJson?.value.trim() || "";
   if (currentResultJson) {
     rememberJsonPath(currentResultJson);
@@ -657,6 +659,7 @@ async function loadImages() {
   try {
     const response = await fetch(`/api/images?${getParams().toString()}`);
     const data = await response.json();
+    if (requestId !== imageRequestId) return;
     if (!response.ok) {
       throw new Error(data.error || "图片加载失败。");
     }
@@ -679,10 +682,36 @@ async function loadImages() {
     gallery.appendChild(fragment);
     updateBulkDefaultAction();
   } catch (error) {
+    if (requestId !== imageRequestId) return;
     setStatus(error.message, true);
     updateBulkDefaultAction();
+  }
+}
+
+async function clearSavedEvaluationsAndReload() {
+  if (!controls.resultJsonClearCache) return;
+  controls.resultJsonClearCache.disabled = true;
+  controls.loadBtn.disabled = true;
+  setStatus("正在清空历史评价...");
+
+  // Invalidate any image/stat responses that started before the clear.
+  imageRequestId += 1;
+  statsRequestId += 1;
+  try {
+    const response = await fetch("/api/annotations/clear", { method: "POST" });
+    const data = await response.json();
+    if (!response.ok || data.total !== 0) {
+      throw new Error(data.error || "历史评价清理失败。");
+    }
+    controls.page.value = "1";
+    controls.resultJsonClearCache.checked = false;
+    await Promise.all([loadImages(), loadStats()]);
+    setStatus(`已清空历史评价并重新加载。评价文件：${data.annotationsFile || "-"}`);
+  } catch (error) {
+    setStatus(error.message, true);
   } finally {
-    clearInferenceCacheNextLoad = false;
+    controls.resultJsonClearCache.disabled = false;
+    controls.loadBtn.disabled = false;
   }
 }
 
@@ -1274,11 +1303,20 @@ async function undoBulkDefaultCurrentPage() {
   }
 }
 
-controls.loadBtn.addEventListener("click", () => {
+controls.loadBtn.addEventListener("click", async () => {
   shuffleSeed = String(Date.now());
-  clearInferenceCacheNextLoad = true;
-  loadImages();
+  if (controls.resultJsonClearCache?.checked) {
+    await clearSavedEvaluationsAndReload();
+  } else {
+    loadImages();
+  }
 });
+if (controls.resultJsonClearCache) {
+  controls.resultJsonClearCache.addEventListener("change", async () => {
+    if (!controls.resultJsonClearCache.checked) return;
+    await clearSavedEvaluationsAndReload();
+  });
+}
 if (controls.prevPage) {
   controls.prevPage.addEventListener("click", () => {
     if (pageState.page <= 1) return;
@@ -1361,7 +1399,6 @@ if (controls.resultJsonSelect) {
     if (selectedValue) {
       rememberJsonPath(selectedValue);
     }
-    clearInferenceCacheNextLoad = true;
     updateImagePathExportLink();
     updateAnnotationsExportLink();
     refreshJsonOptionsPanel();

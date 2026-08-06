@@ -42,6 +42,7 @@ IMAGE_META_CACHE = {}
 INFERENCE_ITEMS_CACHE = {}
 INFERENCE_BASE_CACHE = {}
 INFERENCE_CACHE_LOCK = threading.RLock()
+ANNOTATION_WRITE_LOCK = threading.RLock()
 PROJECT_DIR = APP_DIR.parent
 CONFIGURED_RESULT_JSON = ""
 JSON_OPTIONS_TXT = APP_DIR / "json_candidates.txt"
@@ -611,16 +612,21 @@ def load_annotations():
 
 
 def save_annotations(data):
-    ANNOTATION_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_file = ANNOTATION_FILE.with_suffix(".tmp")
-    with tmp_file.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    tmp_file.replace(ANNOTATION_FILE)
+    with ANNOTATION_WRITE_LOCK:
+        ANNOTATION_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_file = ANNOTATION_FILE.with_suffix(".tmp")
+        with tmp_file.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        tmp_file.replace(ANNOTATION_FILE)
 
 
 def clear_saved_annotations():
     """Start a new review run without discarding the parsed inference cache."""
-    save_annotations({})
+    with ANNOTATION_WRITE_LOCK:
+        save_annotations({})
+        # Verify the persisted state, matching app1's initialization behavior.
+        if load_annotations():
+            raise OSError(f"清理评价失败：{ANNOTATION_FILE}")
 
 
 def normalize_annotation(annotation):
@@ -1111,6 +1117,8 @@ class InspectionHandler(BaseHTTPRequestHandler):
             self.handle_bulk_default_correct()
         elif parsed.path == "/api/annotations/import":
             self.handle_annotations_import()
+        elif parsed.path == "/api/annotations/clear":
+            self.handle_annotations_clear()
         else:
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -1179,7 +1187,10 @@ class InspectionHandler(BaseHTTPRequestHandler):
             # fast reloads; its path/mtime/size cache key prevents stale JSON.
             clear_saved_annotations()
             cache_cleared = True
-        annotations = load_annotations()
+        # Do not immediately read the just-cleared file again. Besides being
+        # unnecessary I/O, this guarantees that this request cannot reuse an
+        # old in-memory annotation snapshot.
+        annotations = {} if cache_cleared else load_annotations()
         annotation_index = build_annotation_index(annotations)
         source = ""
 
@@ -1458,6 +1469,23 @@ class InspectionHandler(BaseHTTPRequestHandler):
             "imported": len(imported),
             "total": len(imported),
         })
+
+    def handle_annotations_clear(self):
+        """Atomically initialize a new review session with no saved labels."""
+        try:
+            clear_saved_annotations()
+        except OSError as error:
+            self.send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        remaining = len(load_annotations())
+        if remaining:
+            self.send_json(
+                {"error": f"清理评价失败，仍有 {remaining} 条记录。"},
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+            return
+        self.send_json({"ok": True, "total": 0, "annotationsFile": str(ANNOTATION_FILE)})
 
     def handle_bulk_default_correct(self):
         length = int(self.headers.get("Content-Length", "0"))
