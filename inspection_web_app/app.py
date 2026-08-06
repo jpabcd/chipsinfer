@@ -348,14 +348,39 @@ def compact_raw_output(raw_output):
     }
 
 
+def restore_model_prediction_index(items):
+    """Restore the lightweight prediction lookup when items came from cache."""
+    for item in items if isinstance(items, list) else []:
+        path = item.get("originalPath", "") if isinstance(item, dict) else ""
+        prediction = item.get("modelPrediction", "") if isinstance(item, dict) else ""
+        if path and prediction:
+            MODEL_PREDICTION_BY_PATH[path] = prediction
+            MODEL_PREDICTION_BY_PATH[os.path.normcase(path)] = prediction
+
+
 def _load_inference_base_items(result_json_path, project_dir, stamp):
     """Parse and normalize the result JSON once, independent of UI filters."""
     result_json_path = resolve_user_supplied_path(result_json_path)
-    base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v2")
+    base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v3")
     with INFERENCE_CACHE_LOCK:
         cached = INFERENCE_BASE_CACHE.get(base_key)
     if cached is not None:
         return cached
+
+    # Persist the normalized base list once. Unlike the previous implementation,
+    # changing light/search/model filters no longer reparses a 300+ MB JSON file.
+    base_cache_id = hashlib.sha256(repr(base_key).encode("utf-8")).hexdigest()
+    base_disk_cache_path = INFERENCE_DISK_CACHE_DIR / f"base-{base_cache_id}.pkl"
+    try:
+        with base_disk_cache_path.open("rb") as file:
+            cached = pickle.load(file)
+        if isinstance(cached, list):
+            restore_model_prediction_index(cached)
+            with INFERENCE_CACHE_LOCK:
+                INFERENCE_BASE_CACHE[base_key] = cached
+            return cached
+    except (OSError, EOFError, pickle.PickleError, ValueError):
+        pass
 
     if orjson is not None:
         payload = orjson.loads(result_json_path.read_bytes())
@@ -437,6 +462,14 @@ def _load_inference_base_items(result_json_path, project_dir, stamp):
 
     with INFERENCE_CACHE_LOCK:
         INFERENCE_BASE_CACHE[base_key] = items
+    try:
+        INFERENCE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        temp_cache_path = base_disk_cache_path.with_suffix(".tmp")
+        with temp_cache_path.open("wb") as file:
+            pickle.dump(items, file, protocol=pickle.HIGHEST_PROTOCOL)
+        temp_cache_path.replace(base_disk_cache_path)
+    except OSError:
+        pass
     return items
 
 
@@ -460,12 +493,7 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
     )
     cached = INFERENCE_ITEMS_CACHE.get(cache_key)
     if cached is not None:
-        for cached_item in cached:
-            cached_path = cached_item.get("originalPath", "")
-            cached_prediction = cached_item.get("modelPrediction", "")
-            if cached_path and cached_prediction:
-                MODEL_PREDICTION_BY_PATH[cached_path] = cached_prediction
-                MODEL_PREDICTION_BY_PATH[os.path.normcase(cached_path)] = cached_prediction
+        restore_model_prediction_index(cached)
         return cached
 
     cache_id = hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()
@@ -474,13 +502,19 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
         with disk_cache_path.open("rb") as file:
             cached = pickle.load(file)
         if isinstance(cached, list):
-            for cached_item in cached:
-                cached_path = cached_item.get("originalPath", "")
-                cached_prediction = cached_item.get("modelPrediction", "")
-                if cached_path and cached_prediction:
-                    MODEL_PREDICTION_BY_PATH[cached_path] = cached_prediction
-                    MODEL_PREDICTION_BY_PATH[os.path.normcase(cached_path)] = cached_prediction
+            restore_model_prediction_index(cached)
             INFERENCE_ITEMS_CACHE[cache_key] = cached
+            # Migrate an existing unfiltered cache into the base-memory layer so
+            # the very next light switch is only an in-memory list filter.
+            if (
+                light_type == "All"
+                and model_prediction_filter == "All"
+                and not keyword
+                and not image_search
+            ):
+                base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v3")
+                with INFERENCE_CACHE_LOCK:
+                    INFERENCE_BASE_CACHE[base_key] = cached
             return cached
     except (OSError, EOFError, pickle.PickleError, ValueError):
         pass
@@ -501,14 +535,9 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
         items.append(base_item)
 
     INFERENCE_ITEMS_CACHE[cache_key] = items
-    try:
-        INFERENCE_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        temp_cache_path = disk_cache_path.with_suffix(".tmp")
-        with temp_cache_path.open("wb") as file:
-            pickle.dump(items, file, protocol=pickle.HIGHEST_PROTOCOL)
-        temp_cache_path.replace(disk_cache_path)
-    except OSError:
-        pass
+    # Filtered views follow app1's fast in-memory filter cache. Persisting one
+    # large pickle per light/search combination made every UI filter block on
+    # disk I/O and duplicated the same records many times.
     return items
 
 
