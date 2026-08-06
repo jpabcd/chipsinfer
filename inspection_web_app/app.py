@@ -44,6 +44,7 @@ INFERENCE_BASE_CACHE = {}
 INFERENCE_CACHE_LOCK = threading.RLock()
 PROJECT_DIR = APP_DIR.parent
 CONFIGURED_RESULT_JSON = ""
+JSON_OPTIONS_TXT = APP_DIR / "json_candidates.txt"
 INFERENCE_DISK_CACHE_DIR = APP_DIR / ".inference_cache"
 MODEL_PREDICTION_BY_PATH = {}
 
@@ -151,6 +152,78 @@ def resolve_user_supplied_path(path_value):
         if merged.exists():
             return merged
     return (Path.cwd() / candidate).resolve()
+
+
+def resolve_json_option_path(path_value, txt_file_path=None, project_dir=None):
+    candidate = Path(str(path_value)).expanduser()
+    roots = []
+
+    if candidate.is_absolute():
+        return candidate.resolve()
+
+    if txt_file_path:
+        roots.append(Path(txt_file_path).expanduser().resolve().parent)
+    if project_dir:
+        roots.append(Path(project_dir).expanduser().resolve())
+    roots.extend([
+        Path.cwd(),
+        APP_DIR,
+        APP_DIR.parent,
+    ])
+
+    seen = set()
+    for root in roots:
+        root_key = str(root)
+        if root_key in seen:
+            continue
+        seen.add(root_key)
+        merged = (root / candidate).resolve()
+        if merged.exists():
+            return merged
+    return (Path.cwd() / candidate).resolve()
+
+
+def load_json_options_from_txt(txt_path, project_dir=None):
+    txt_file = resolve_user_supplied_path(txt_path)
+    if not txt_file.is_file():
+        raise FileNotFoundError(f"TXT 文件不存在：{txt_file}")
+
+    try:
+        lines = txt_file.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        lines = txt_file.read_text(encoding="gbk").splitlines()
+
+    options = []
+    seen = set()
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        # Allow CSV-ish lines and quoted paths.
+        line = line.rstrip(",;")
+        line = line.strip().strip('"').strip("'")
+        if not line:
+            continue
+
+        resolved = resolve_json_option_path(line, txt_file_path=txt_file, project_dir=project_dir)
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        if resolved.suffix.lower() != ".json":
+            continue
+
+        options.append({
+            "path": key,
+            "name": resolved.name,
+            "exists": resolved.is_file(),
+        })
+
+    # Existing files first, then lexicographic path order for stable UI.
+    options.sort(key=lambda item: (not item["exists"], item["path"]))
+    return options
 
 
 def get_image_meta_cached(image_path):
@@ -718,6 +791,26 @@ def shuffle_paths(paths, seed):
     )
 
 
+def make_image_path_export_items(paths, base_dir):
+    """Build a portable path manifest for the currently filtered images."""
+    absolute_base_dir = Path(base_dir).expanduser().resolve() if base_dir else None
+    items = []
+    for path in paths:
+        absolute_path = Path(path).expanduser().resolve()
+        source = ""
+        if absolute_base_dir:
+            try:
+                source = absolute_path.parent.relative_to(absolute_base_dir).as_posix()
+            except ValueError:
+                source = os.path.relpath(absolute_path.parent, absolute_base_dir).replace("\\", "/")
+        items.append({
+            "imagePath": str(absolute_path),
+            "imageName": absolute_path.name,
+            "source": source,
+        })
+    return items
+
+
 def json_bytes(payload):
     if orjson is not None:
         return orjson.dumps(payload)
@@ -740,6 +833,10 @@ class InspectionHandler(BaseHTTPRequestHandler):
             self.handle_image(parse_qs(parsed.query))
         elif parsed.path == "/api/annotations":
             self.handle_annotations_export()
+        elif parsed.path == "/api/export-image-paths":
+            self.handle_image_paths_export(parse_qs(parsed.query))
+        elif parsed.path == "/api/json-options":
+            self.handle_json_options(parse_qs(parsed.query))
         elif parsed.path == "/api/stats":
             self.handle_stats()
         else:
@@ -1141,6 +1238,101 @@ class InspectionHandler(BaseHTTPRequestHandler):
             for path, annotation in annotations.items()
         ]
         self.send_json_download({"count": len(rows), "items": rows}, "inspection_annotations.json")
+
+    def handle_image_paths_export(self, query):
+        """Export all paths matching the active filters, not only the visible page."""
+        result_json = query.get("result_json", [""])[0].strip() or CONFIGURED_RESULT_JSON
+        project_dir = query.get("project_dir", [""])[0].strip() or str(PROJECT_DIR)
+        base_dir = query.get("base_dir", [""])[0].strip()
+        light_type = query.get("light_type", ["All"])[0] or "All"
+        keyword = query.get("keyword", [""])[0]
+        image_search = query.get("image_search", [""])[0]
+        model_prediction_filter = query.get("model_prediction", ["All"])[0] or "All"
+        confusion_cell = query.get("confusion_cell", [""])[0].upper()
+        confusion_light = query.get("confusion_light", [""])[0]
+
+        annotations = load_annotations()
+        annotation_index = build_annotation_index(annotations)
+        source_root = base_dir
+
+        try:
+            if result_json:
+                result_json_path = resolve_user_supplied_path(result_json)
+                items = load_inference_items(
+                    result_json_path,
+                    light_type,
+                    model_prediction_filter,
+                    keyword,
+                    image_search,
+                    project_dir,
+                )
+                paths = [item.get("originalPath", "") for item in items if item.get("originalPath")]
+                if not source_root:
+                    source_root = project_dir or str(result_json_path.parent)
+            else:
+                if not base_dir:
+                    self.send_json({"error": "请填写推理结果 JSON 或图片根目录。"}, HTTPStatus.BAD_REQUEST)
+                    return
+                source_root = os.path.abspath(os.path.expanduser(base_dir))
+                if not os.path.isdir(source_root):
+                    self.send_json({"error": f"图片根目录不存在：{source_root}"}, HTTPStatus.BAD_REQUEST)
+                    return
+                paths = get_filtered_images(light_type, keyword, source_root)
+                paths = [
+                    path for path in paths
+                    if image_matches_search(path, annotations, image_search, annotation_index)
+                ]
+                if model_prediction_filter != "All":
+                    paths = [
+                        path for path in paths
+                        if get_model_prediction(path) == model_prediction_filter
+                    ]
+
+            confusion_basename_set = build_confusion_basename_set(
+                annotations, confusion_cell, confusion_light
+            )
+            filtered_paths = []
+            for path in paths:
+                if confusion_basename_set is not None:
+                    if annotation_lookup_key(path) not in confusion_basename_set:
+                        continue
+                elif confusion_cell and confusion_cell != "ALL" and not matches_confusion_filter(
+                    path, annotations, confusion_cell, confusion_light, annotation_index
+                ):
+                    continue
+                filtered_paths.append(path)
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            self.send_json({"error": f"读取数据失败：{error}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        self.send_json_download(
+            {
+                "count": len(filtered_paths),
+                "items": make_image_path_export_items(filtered_paths, source_root),
+            },
+            "filtered_image_paths.json",
+        )
+
+    def handle_json_options(self, query):
+        project_dir = query.get("project_dir", [""])[0].strip() or str(PROJECT_DIR)
+
+        try:
+            items = load_json_options_from_txt(str(JSON_OPTIONS_TXT), project_dir=project_dir)
+        except FileNotFoundError:
+            self.send_json({
+                "count": 0,
+                "items": [],
+                "warning": f"固定候选 TXT 不存在：{JSON_OPTIONS_TXT}",
+            })
+            return
+        except (OSError, ValueError) as error:
+            self.send_json({"error": f"读取 TXT 失败：{error}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        self.send_json({
+            "count": len(items),
+            "items": items,
+        })
 
     def handle_stats(self):
         annotations = load_annotations()

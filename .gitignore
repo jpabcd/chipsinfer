@@ -6,3 +6,4 @@ inspection_web_app/.inference_cache
 inspection_web_app/__pycache__/
 26G03090-06/
 my_weights/
+自训练平台/

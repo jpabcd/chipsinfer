@@ -8,9 +8,12 @@
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <h1>工业检测图片评价台</h1>
-      <p>分类结果、目标检测问题和绿色缺陷框独立评价保存。</p>
+    <div class="header-left">
+      <div>
+        <h1>工业检测图片评价台</h1>
+        <p>分类结果、目标检测问题和绿色缺陷框独立评价保存。</p>
+      </div>
+      <a id="exportImagePaths" class="export-link header-inline-link" href="#" download="filtered_image_paths.json">导出筛选图片路径</a>
     </div>
     <div class="header-actions">
       <label class="import-control">
@@ -25,8 +28,17 @@
     <section class="controls" aria-label="筛选与显示设置">
       <label>
         推理结果 JSON
-        <input id="resultJson" type="text" value="" placeholder="例如：outputs/run_20260721_054435/json/main_inferer_dataloader_results.json">
+        <div class="result-json-control">
+          <select id="resultJsonSelect" aria-label="选择推理结果 JSON">
+            <option value="">手动输入</option>
+          </select>
+          <input id="resultJson" type="text" value="" placeholder="例如：outputs/run_20260721_054435/json/main_inferer_dataloader_results.json">
+        </div>
       </label>
+      <section id="jsonOptionsPanel" class="json-options-panel" aria-label="JSON 候选列表" hidden>
+        <div id="jsonOptionsMeta" class="json-options-meta"></div>
+        <div id="jsonOptionsList" class="json-options-list"></div>
+      </section>
       <label>
         工程目录
         <input id="projectDir" type="text" value="" placeholder="例如：/workspace/.../Detectors/rect_detector">

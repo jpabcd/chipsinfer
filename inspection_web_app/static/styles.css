@@ -28,10 +28,22 @@ body {
   display: flex;
   justify-content: space-between;
   gap: 20px;
-  align-items: center;
+  align-items: flex-start;
   padding: 18px 24px;
   background: #14213d;
   color: #fff;
+}
+
+.header-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.header-inline-link {
+  margin-top: 6px;
+  white-space: nowrap;
 }
 
 h1 {
@@ -98,10 +110,69 @@ main {
   border-radius: 8px;
 }
 
+.json-options-panel {
+  grid-column: 1 / -1;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.json-options-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.json-options-list {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  max-height: 220px;
+  overflow: auto;
+}
+
+.json-option-btn {
+  text-align: left;
+  border: 1px solid #c8d6ea;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  padding: 8px 10px;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+}
+
+.json-option-btn span {
+  color: var(--muted);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.json-option-btn:hover {
+  border-color: var(--brand);
+}
+
+.json-option-btn.missing {
+  opacity: 0.6;
+}
+
+.json-option-btn:disabled {
+  cursor: not-allowed;
+}
+
 .checkbox-control input {
   width: auto;
   justify-self: start;
   min-height: 22px;
+}
+
+.result-json-control {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
 }
 
 label {

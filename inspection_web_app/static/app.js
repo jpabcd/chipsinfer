@@ -1,5 +1,9 @@
 const controls = {
   resultJson: document.querySelector("#resultJson"),
+  resultJsonSelect: document.querySelector("#resultJsonSelect"),
+  jsonOptionsPanel: document.querySelector("#jsonOptionsPanel"),
+  jsonOptionsMeta: document.querySelector("#jsonOptionsMeta"),
+  jsonOptionsList: document.querySelector("#jsonOptionsList"),
   projectDir: document.querySelector("#projectDir"),
   baseDir: document.querySelector("#baseDir"),
   lightType: document.querySelector("#lightType"),
@@ -14,6 +18,7 @@ const controls = {
   page: document.querySelector("#page"),
   loadBtn: document.querySelector("#loadBtn"),
   importFile: document.querySelector("#importFile"),
+  exportImagePaths: document.querySelector("#exportImagePaths"),
   prevPage: document.querySelector("#prevPage"),
   nextPage: document.querySelector("#nextPage"),
   currentPageText: document.querySelector("#currentPageText"),
@@ -23,6 +28,11 @@ const controls = {
   undoBulkDefault: document.querySelector("#undoBulkDefault"),
   bulkDefaultHint: document.querySelector("#bulkDefaultHint"),
   modelFilterButtons: document.querySelectorAll("[data-model-filter]"),
+};
+
+const STORAGE_KEYS = {
+  resultJson: "inspection.resultJson",
+  rememberedJsons: "inspection.rememberedJsons",
 };
 
 const gallery = document.querySelector("#gallery");
@@ -54,6 +64,8 @@ let confusionFilter = {
 let clearMatrixFilterButton = null;
 let activeMatrixFilterText = null;
 let pendingBulkUndoEntries = [];
+let jsonOptionsFromTxt = [];
+let rememberedJsons = [];
 
 // One resize listener for the whole page is substantially cheaper than one
 // listener per card, especially when a page contains dozens of cards.
@@ -374,7 +386,217 @@ function getParams() {
   });
 }
 
+function updateImagePathExportLink() {
+  if (!controls.exportImagePaths) return;
+  const params = getParams();
+  // Export is intentionally independent of pagination, shuffle, and ordering.
+  params.delete("page");
+  params.delete("shuffle");
+  params.delete("shuffle_seed");
+  params.delete("json_first");
+  controls.exportImagePaths.href = `/api/export-image-paths?${params.toString()}`;
+}
+
+function uniqueNonEmptyStrings(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values || []) {
+    const text = String(value || "").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    result.push(text);
+  }
+  return result;
+}
+
+function loadRememberedJsons() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.rememberedJsons) || "[]");
+    rememberedJsons = uniqueNonEmptyStrings(parsed).slice(0, 50);
+  } catch {
+    rememberedJsons = [];
+  }
+}
+
+function saveRememberedJsons() {
+  localStorage.setItem(STORAGE_KEYS.rememberedJsons, JSON.stringify(rememberedJsons.slice(0, 50)));
+}
+
+function rememberJsonPath(path) {
+  const text = String(path || "").trim();
+  if (!text) return;
+  rememberedJsons = [text, ...rememberedJsons.filter((item) => item !== text)].slice(0, 50);
+  saveRememberedJsons();
+  localStorage.setItem(STORAGE_KEYS.resultJson, text);
+}
+
+function mergeTxtAndRememberedOptions(txtItems = []) {
+  const byPath = new Map();
+  for (const item of txtItems) {
+    if (!item?.path) continue;
+    byPath.set(item.path, {
+      path: item.path,
+      name: item.name || "",
+      exists: Boolean(item.exists),
+      fromRemembered: false,
+    });
+  }
+
+  for (const rememberedPath of rememberedJsons) {
+    if (!byPath.has(rememberedPath)) {
+      const chunks = rememberedPath.split("/");
+      byPath.set(rememberedPath, {
+        path: rememberedPath,
+        name: chunks[chunks.length - 1] || rememberedPath,
+        exists: true,
+        fromRemembered: true,
+      });
+    }
+  }
+
+  const merged = Array.from(byPath.values());
+  merged.sort((a, b) => {
+    if (a.fromRemembered !== b.fromRemembered) return a.fromRemembered ? -1 : 1;
+    if (a.exists !== b.exists) return a.exists ? -1 : 1;
+    return a.path.localeCompare(b.path);
+  });
+  return merged;
+}
+
+function refreshResultJsonSelect() {
+  if (!controls.resultJsonSelect) return;
+
+  const currentPath = controls.resultJson?.value.trim() || "";
+  const items = getResultJsonSelectItems();
+  const seen = new Set();
+  const fragment = document.createDocumentFragment();
+
+  const manualOption = document.createElement("option");
+  manualOption.value = "";
+  manualOption.textContent = "手动输入";
+  fragment.appendChild(manualOption);
+
+  items.forEach((item) => {
+    const path = item.path || "";
+    if (!path || seen.has(path)) return;
+    seen.add(path);
+
+    const option = document.createElement("option");
+    option.value = path;
+    option.textContent = item.name || path;
+    if (path === currentPath) {
+      option.selected = true;
+    }
+    fragment.appendChild(option);
+  });
+
+  controls.resultJsonSelect.innerHTML = "";
+  controls.resultJsonSelect.appendChild(fragment);
+  controls.resultJsonSelect.value = currentPath && seen.has(currentPath) ? currentPath : "";
+}
+
+function getResultJsonSelectItems() {
+  const currentPath = controls.resultJson?.value.trim() || "";
+  const items = mergeTxtAndRememberedOptions(jsonOptionsFromTxt);
+  if (currentPath && !items.some((item) => item.path === currentPath)) {
+    const chunks = currentPath.split("/");
+    items.unshift({
+      path: currentPath,
+      name: chunks[chunks.length - 1] || currentPath,
+      exists: true,
+      fromRemembered: false,
+    });
+  }
+  return items;
+}
+
+function renderJsonOptions(items = []) {
+  if (!controls.jsonOptionsPanel || !controls.jsonOptionsList || !controls.jsonOptionsMeta) return;
+
+  controls.jsonOptionsList.innerHTML = "";
+  if (!items.length) {
+    controls.jsonOptionsPanel.hidden = true;
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  items.forEach((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "json-option-btn";
+    if (!item.exists) {
+      button.classList.add("missing");
+    }
+    button.innerHTML = `<strong>${escapeHtml(item.name || "(unknown)")}</strong><span>${escapeHtml(item.path || "")}</span>`;
+    button.disabled = !item.exists;
+    button.addEventListener("click", () => {
+      controls.resultJson.value = item.path || "";
+      controls.page.value = "1";
+      shuffleSeed = String(Date.now());
+      rememberJsonPath(item.path || "");
+      updateImagePathExportLink();
+      loadImages();
+    });
+    fragment.appendChild(button);
+  });
+  controls.jsonOptionsList.appendChild(fragment);
+
+  const rememberedCount = items.filter((item) => item.fromRemembered).length;
+  controls.jsonOptionsMeta.textContent = `候选 JSON：${items.length} 条（记忆 ${rememberedCount} 条）`;
+  controls.jsonOptionsPanel.hidden = false;
+}
+
+function refreshJsonOptionsPanel() {
+  renderJsonOptions(mergeTxtAndRememberedOptions(jsonOptionsFromTxt));
+  refreshResultJsonSelect();
+}
+
+async function loadJsonOptionsFromTxt({ silentIfEmpty = false } = {}) {
+
+  try {
+    if (!silentIfEmpty) {
+      setStatus("正在自动读取 JSON 候选列表...");
+    }
+    const params = new URLSearchParams({
+      project_dir: controls.projectDir?.value.trim() || "",
+    });
+    const response = await fetch(`/api/json-options?${params.toString()}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "读取 JSON 候选失败。");
+    }
+    jsonOptionsFromTxt = data.items || [];
+    refreshJsonOptionsPanel();
+    if (data.warning && !silentIfEmpty) {
+      setStatus(data.warning, true);
+      return;
+    }
+    if (!silentIfEmpty) {
+      setStatus(`已自动加载 JSON 候选：${data.count || 0} 条。`);
+    }
+  } catch (error) {
+    jsonOptionsFromTxt = [];
+    refreshJsonOptionsPanel();
+    if (!silentIfEmpty) {
+      setStatus(error.message, true);
+    }
+  }
+}
+
+function restoreJsonPreference() {
+  loadRememberedJsons();
+  const rememberedResultJson = localStorage.getItem(STORAGE_KEYS.resultJson) || "";
+  if (controls.resultJson && rememberedResultJson && !controls.resultJson.value.trim()) {
+    controls.resultJson.value = rememberedResultJson;
+  }
+}
+
 async function loadImages() {
+  const currentResultJson = controls.resultJson?.value.trim() || "";
+  if (currentResultJson) {
+    rememberJsonPath(currentResultJson);
+  }
+
   setStatus("正在加载图片...");
   gallery.innerHTML = "";
   currentPageCards = [];
@@ -919,6 +1141,10 @@ controls.modelFilterButtons.forEach((button) => {
   });
 });
 controls.importFile.addEventListener("change", importAnnotations);
+if (controls.exportImagePaths) {
+  controls.exportImagePaths.addEventListener("click", updateImagePathExportLink);
+  updateImagePathExportLink();
+}
 if (statsEls.refresh) {
   statsEls.refresh.addEventListener("click", loadStats);
 }
@@ -938,8 +1164,37 @@ if (statsEls.refresh) {
 ].forEach((control) => {
   control.addEventListener("change", () => {
     controls.page.value = "1";
+    updateImagePathExportLink();
   });
 });
+
+if (controls.resultJson) {
+  controls.resultJson.addEventListener("input", () => {
+    updateImagePathExportLink();
+    rememberJsonPath(controls.resultJson.value);
+    refreshJsonOptionsPanel();
+  });
+}
+
+if (controls.resultJsonSelect) {
+  controls.resultJsonSelect.addEventListener("change", () => {
+    const selectedValue = controls.resultJsonSelect.value || "";
+    if (controls.resultJson) {
+      controls.resultJson.value = selectedValue;
+    }
+    if (selectedValue) {
+      rememberJsonPath(selectedValue);
+    }
+    updateImagePathExportLink();
+    refreshJsonOptionsPanel();
+  });
+}
+
+if (controls.projectDir) {
+  controls.projectDir.addEventListener("change", () => {
+    loadJsonOptionsFromTxt({ silentIfEmpty: true });
+  });
+}
 
 controls.keyword.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
@@ -982,5 +1237,7 @@ async function importAnnotations(event) {
 }
 
 setupMatrixFilterUi();
+restoreJsonPreference();
+loadJsonOptionsFromTxt({ silentIfEmpty: true });
 loadImages();
 loadStats();
