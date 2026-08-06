@@ -20,7 +20,7 @@
         导入 JSON
         <input id="importFile" type="file" accept="application/json,.json">
       </label>
-      <a class="export-link" href="/api/annotations" download="inspection_annotations.json">下载评价 JSON</a>
+      <a id="exportAnnotations" class="export-link" href="/api/annotations" download="inspection_annotations.json">下载评价 JSON</a>
     </div>
   </header>
 
@@ -34,6 +34,10 @@
           </select>
           <input id="resultJson" type="text" value="" placeholder="例如：outputs/run_20260721_054435/json/main_inferer_dataloader_results.json">
         </div>
+      </label>
+      <label class="checkbox-control result-json-cache-control" title="加载推理结果 JSON 前清空以前保存的评价，不删除推理结果缓存">
+        清理缓存
+        <input id="resultJsonClearCache" type="checkbox">
       </label>
       <section id="jsonOptionsPanel" class="json-options-panel" aria-label="JSON 候选列表" hidden>
         <div id="jsonOptionsMeta" class="json-options-meta"></div>

@@ -49,6 +49,25 @@ INFERENCE_DISK_CACHE_DIR = APP_DIR / ".inference_cache"
 MODEL_PREDICTION_BY_PATH = {}
 
 
+def clear_inference_runtime_cache(clear_disk_cache=False):
+    IMAGE_META_CACHE.clear()
+    MODEL_PREDICTION_BY_PATH.clear()
+    with INFERENCE_CACHE_LOCK:
+        INFERENCE_ITEMS_CACHE.clear()
+        INFERENCE_BASE_CACHE.clear()
+
+    removed_disk_files = 0
+    if clear_disk_cache and INFERENCE_DISK_CACHE_DIR.exists():
+        for pattern in ("*.pkl", "*.tmp"):
+            for cache_file in INFERENCE_DISK_CACHE_DIR.glob(pattern):
+                try:
+                    cache_file.unlink()
+                    removed_disk_files += 1
+                except OSError:
+                    continue
+    return removed_disk_files
+
+
 def normalize_path_text(value):
     return str(value).replace("\\", "/").rstrip("/")
 
@@ -599,6 +618,11 @@ def save_annotations(data):
     tmp_file.replace(ANNOTATION_FILE)
 
 
+def clear_saved_annotations():
+    """Start a new review run without discarding the parsed inference cache."""
+    save_annotations({})
+
+
 def normalize_annotation(annotation):
     if not isinstance(annotation, dict):
         annotation = {}
@@ -625,6 +649,22 @@ def normalize_annotation(annotation):
     if not isinstance(green_defect_regions, list):
         green_defect_regions = []
 
+    inference_removed_regions = annotation.get("inferenceRemovedRegions", [])
+    if not isinstance(inference_removed_regions, list):
+        inference_removed_regions = []
+    inference_removed_regions = [
+        item for item in inference_removed_regions
+        if isinstance(item, dict)
+    ]
+
+    inference_regions = annotation.get("inferenceRegions", [])
+    if not isinstance(inference_regions, list):
+        inference_regions = []
+    inference_regions = [
+        item for item in inference_regions
+        if isinstance(item, dict)
+    ]
+
     verdict = CLASSIFICATION_VERDICT_MAP.get(annotation.get("verdict", ""), annotation.get("verdict", ""))
     model_prediction = annotation.get("modelPrediction", annotation.get("model_prediction", ""))
     model_prediction = INFER_MODEL_PREDICTION_MAP.get(model_prediction, model_prediction)
@@ -647,6 +687,8 @@ def normalize_annotation(annotation):
         "modelPrediction": model_prediction,
         "greenDefect": green_defect,
         "greenDefectRegions": green_defect_regions,
+        "inferenceRegions": inference_regions,
+        "inferenceRemovedRegions": inference_removed_regions,
         "detectionIssues": clean_issues,
         "defectType": clean_issues[0] if clean_issues else "",
         "missRegions": miss_regions,
@@ -655,6 +697,223 @@ def normalize_annotation(annotation):
         "imageName": annotation.get("imageName", ""),
         "updatedAt": annotation.get("updatedAt", ""),
     }
+
+
+def _to_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clamp01(value):
+    return max(0.0, min(1.0, value))
+
+
+def _normalize_region_for_app1(region, image_width, image_height, default_class_name=""):
+    if not isinstance(region, dict):
+        return None
+
+    x = _to_float(region.get("x"))
+    y = _to_float(region.get("y"))
+    w = _to_float(region.get("w"))
+    h = _to_float(region.get("h"))
+    if x is None or y is None or w is None or h is None:
+        return None
+    if w <= 0 or h <= 0:
+        return None
+
+    # Existing annotations are typically absolute pixels. If values are already
+    # normalized, keep them as-is; otherwise convert using image dimensions.
+    looks_normalized = (
+        0.0 <= x <= 1.0
+        and 0.0 <= y <= 1.0
+        and 0.0 <= w <= 1.0
+        and 0.0 <= h <= 1.0
+        and x + w <= 1.000001
+        and y + h <= 1.000001
+    )
+    if not looks_normalized:
+        if image_width <= 0 or image_height <= 0:
+            return None
+        x = x / image_width
+        y = y / image_height
+        w = w / image_width
+        h = h / image_height
+
+    x = _clamp01(x)
+    y = _clamp01(y)
+    w = _clamp01(w)
+    h = _clamp01(h)
+    if x + w > 1.0:
+        w = max(0.0, 1.0 - x)
+    if y + h > 1.0:
+        h = max(0.0, 1.0 - y)
+    if w <= 0 or h <= 0:
+        return None
+
+    return {
+        "x": round(x, 6),
+        "y": round(y, 6),
+        "w": round(w, 6),
+        "h": round(h, 6),
+        "className": str(region.get("className") or region.get("label") or default_class_name or ""),
+        "note": str(region.get("note") or ""),
+    }
+
+
+def _region_signature(region):
+    x = _to_float(region.get("x")) or 0.0
+    y = _to_float(region.get("y")) or 0.0
+    w = _to_float(region.get("w")) or 0.0
+    h = _to_float(region.get("h")) or 0.0
+    return "|".join([
+        f"{x:.6f}",
+        f"{y:.6f}",
+        f"{w:.6f}",
+        f"{h:.6f}",
+        str(region.get("label") or ""),
+    ])
+
+
+def annotation_to_app1_compatible_row(path, annotation, inference_regions=None):
+    normalized = normalize_annotation(annotation)
+    verdict = normalized.get("verdict", "")
+    if not isinstance(inference_regions, list):
+        inference_regions = []
+    persisted_inference_regions = normalized.get("inferenceRegions", []) if isinstance(normalized.get("inferenceRegions", []), list) else []
+    candidate_inference_regions = inference_regions or persisted_inference_regions
+    has_any_regions = any(
+        isinstance(normalized.get(key), list) and len(normalized.get(key)) > 0
+        for key in ("greenDefectRegions", "missRegions", "falseRegions")
+    )
+    has_any_regions = has_any_regions or len(candidate_inference_regions) > 0
+    status = "good" if verdict == "分类正确" else ("bad" if verdict == "分类错误" else "")
+    if has_any_regions:
+        # app1 clears regions when status=good. Keep boxes visible after import.
+        status = "bad"
+
+    removed_signatures = {
+        _region_signature(region)
+        for region in normalized.get("inferenceRemovedRegions", [])
+        if isinstance(region, dict)
+    }
+
+    filtered_inference_regions = []
+    for region in candidate_inference_regions:
+        if not isinstance(region, dict):
+            continue
+        if _region_signature(region) in removed_signatures:
+            continue
+        filtered_inference_regions.append(region)
+
+    image_width, image_height = get_image_meta_cached(path)
+    regions = []
+    exported_inference_regions = []
+    if status == "bad":
+        for default_name, blocks in (
+            ("绿色缺陷", normalized.get("greenDefectRegions", [])),
+            ("漏检", normalized.get("missRegions", [])),
+            ("错检", normalized.get("falseRegions", [])),
+        ):
+            for region in blocks if isinstance(blocks, list) else []:
+                normalized_region = _normalize_region_for_app1(
+                    region,
+                    image_width=image_width,
+                    image_height=image_height,
+                    default_class_name=default_name,
+                )
+                if normalized_region:
+                    if default_name == "漏检":
+                        normalized_region["source"] = "miss_region"
+                    elif default_name == "错检":
+                        normalized_region["source"] = "false_region"
+                    elif default_name == "绿色缺陷":
+                        normalized_region["source"] = "green_defect_region"
+                    regions.append(normalized_region)
+
+        for region in filtered_inference_regions:
+            normalized_region = _normalize_region_for_app1(
+                region,
+                image_width=image_width,
+                image_height=image_height,
+                default_class_name="推理框",
+            )
+            if not normalized_region:
+                continue
+            normalized_region["source"] = "inference_detection"
+            if region.get("note"):
+                normalized_region["note"] = str(region.get("note"))
+            exported_inference_regions.append(dict(normalized_region))
+            regions.append(normalized_region)
+
+        # Deduplicate highly similar boxes while preserving insertion order.
+        seen = set()
+        deduped = []
+        for region in regions:
+            key = (
+                round(float(region.get("x", 0)), 6),
+                round(float(region.get("y", 0)), 6),
+                round(float(region.get("w", 0)), 6),
+                round(float(region.get("h", 0)), 6),
+                str(region.get("className", "")),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(region)
+        regions = deduped
+
+    return {
+        "originalPath": path,
+        "imagePath": path,
+        "imageName": normalized.get("imageName") or path_basename(path),
+        "status": status,
+        "regions": [] if status == "good" else regions,
+        "inferenceRegions": [] if status == "good" else exported_inference_regions,
+        "note": normalized.get("note", ""),
+        "updatedAt": normalized.get("updatedAt", ""),
+        # Preserve existing export fields for backward compatibility.
+        **normalized,
+    }
+
+
+def build_inference_detection_region_index(result_json_path, project_dir=None):
+    items = load_inference_items(
+        result_json_path=result_json_path,
+        light_type="All",
+        model_prediction_filter="All",
+        keyword="",
+        image_search="",
+        project_dir=project_dir,
+    )
+    indexed = {}
+    for item in items:
+        original_path = item.get("originalPath", "")
+        if not original_path:
+            continue
+        width, height = get_image_meta_cached(original_path)
+        if width <= 0 or height <= 0:
+            continue
+        raw_output = item.get("_rawOutput") or {}
+        source_regions = []
+        for region in detection_regions(raw_output, width, height):
+            if not isinstance(region, dict):
+                continue
+            label = str(region.get("label") or "").strip()
+            class_name = label.split(" ", 1)[0] if label else "推理框"
+            source_regions.append({
+                "x": region.get("x", 0),
+                "y": region.get("y", 0),
+                "w": region.get("w", 0),
+                "h": region.get("h", 0),
+                "className": class_name,
+                "note": label,
+            })
+
+        key = os.path.normcase(original_path)
+        indexed[key] = source_regions
+    return indexed
 
 
 def annotations_from_import(payload):
@@ -832,7 +1091,7 @@ class InspectionHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/image":
             self.handle_image(parse_qs(parsed.query))
         elif parsed.path == "/api/annotations":
-            self.handle_annotations_export()
+            self.handle_annotations_export(parse_qs(parsed.query))
         elif parsed.path == "/api/export-image-paths":
             self.handle_image_paths_export(parse_qs(parsed.query))
         elif parsed.path == "/api/json-options":
@@ -869,7 +1128,9 @@ class InspectionHandler(BaseHTTPRequestHandler):
         content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "public, max-age=3600")
+        # HTML/JS/CSS are edited while the inspection app is running. Do not
+        # let the browser keep an old control layout or request-building code.
+        self.send_header("Cache-Control", "no-cache, must-revalidate")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -903,12 +1164,21 @@ class InspectionHandler(BaseHTTPRequestHandler):
         shuffle_enabled = query.get("shuffle", ["true"])[0].lower() in ("1", "true", "yes", "on")
         shuffle_seed = query.get("shuffle_seed", ["default"])[0]
         json_first = query.get("json_first", ["true"])[0].lower() in ("1", "true", "yes", "on")
+        clear_cache = query.get("clear_cache", ["false"])[0].lower() in ("1", "true", "yes", "on")
         image_search = query.get("image_search", [""])[0]
         model_prediction_filter = query.get("model_prediction", ["All"])[0] or "All"
         confusion_cell = query.get("confusion_cell", [""])[0].upper()
         confusion_light = query.get("confusion_light", [""])[0]
 
         per_page = num_col * num_row
+        cache_cleared = False
+        removed_disk_files = 0
+        if clear_cache and result_json:
+            # The review cache is the saved annotation file. Keep the parsed
+            # inference cache so a large result JSON can still use app1-style
+            # fast reloads; its path/mtime/size cache key prevents stale JSON.
+            clear_saved_annotations()
+            cache_cleared = True
         annotations = load_annotations()
         annotation_index = build_annotation_index(annotations)
         source = ""
@@ -1045,6 +1315,8 @@ class InspectionHandler(BaseHTTPRequestHandler):
             "modelPredictionFilter": model_prediction_filter,
             "confusionCell": confusion_cell,
             "confusionLight": confusion_light,
+            "cacheCleared": cache_cleared,
+            "cacheFilesRemoved": removed_disk_files,
         })
 
     def handle_image(self, query):
@@ -1097,6 +1369,8 @@ class InspectionHandler(BaseHTTPRequestHandler):
             "verdict": verdict,
             "greenDefect": payload.get("greenDefect", False),
             "greenDefectRegions": payload.get("greenDefectRegions", []),
+            "inferenceRegions": payload.get("inferenceRegions", []),
+            "inferenceRemovedRegions": payload.get("inferenceRemovedRegions", []),
             "detectionIssues": detection_issues,
             "missRegions": payload.get("missRegions", []),
             "falseRegions": payload.get("falseRegions", []),
@@ -1178,7 +1452,12 @@ class InspectionHandler(BaseHTTPRequestHandler):
             return
 
         save_annotations(imported)
-        self.send_json({"ok": True, "imported": len(imported), "total": len(imported)})
+
+        self.send_json({
+            "ok": True,
+            "imported": len(imported),
+            "total": len(imported),
+        })
 
     def handle_bulk_default_correct(self):
         length = int(self.headers.get("Content-Length", "0"))
@@ -1231,12 +1510,29 @@ class InspectionHandler(BaseHTTPRequestHandler):
             "skippedPaths": skipped_paths,
         })
 
-    def handle_annotations_export(self):
+    def handle_annotations_export(self, query=None):
+        query = query or {}
+        result_json = query.get("result_json", [""])[0].strip() or CONFIGURED_RESULT_JSON
+        project_dir = query.get("project_dir", [""])[0].strip() or str(PROJECT_DIR)
+
+        inference_regions_by_path = {}
+        if result_json:
+            try:
+                inference_regions_by_path = build_inference_detection_region_index(
+                    result_json_path=result_json,
+                    project_dir=project_dir,
+                )
+            except Exception:
+                inference_regions_by_path = {}
+
         annotations = load_annotations()
-        rows = [
-            {"originalPath": path, **normalize_annotation(annotation)}
-            for path, annotation in annotations.items()
-        ]
+        rows = []
+        for path, annotation in annotations.items():
+            rows.append(annotation_to_app1_compatible_row(
+                path,
+                annotation,
+                inference_regions=inference_regions_by_path.get(os.path.normcase(path), []),
+            ))
         self.send_json_download({"count": len(rows), "items": rows}, "inspection_annotations.json")
 
     def handle_image_paths_export(self, query):

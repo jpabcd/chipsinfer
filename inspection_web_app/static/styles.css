@@ -169,6 +169,10 @@ main {
   min-height: 22px;
 }
 
+.result-json-cache-control {
+  align-content: start;
+}
+
 .result-json-control {
   display: grid;
   gap: 8px;

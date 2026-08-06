@@ -15,9 +15,11 @@ const controls = {
   scaleRatio: document.querySelector("#scaleRatio"),
   shuffleImages: document.querySelector("#shuffleImages"),
   jsonFirst: document.querySelector("#jsonFirst"),
+  resultJsonClearCache: document.querySelector("#resultJsonClearCache"),
   page: document.querySelector("#page"),
   loadBtn: document.querySelector("#loadBtn"),
   importFile: document.querySelector("#importFile"),
+  exportAnnotations: document.querySelector("#exportAnnotations"),
   exportImagePaths: document.querySelector("#exportImagePaths"),
   prevPage: document.querySelector("#prevPage"),
   nextPage: document.querySelector("#nextPage"),
@@ -66,6 +68,7 @@ let activeMatrixFilterText = null;
 let pendingBulkUndoEntries = [];
 let jsonOptionsFromTxt = [];
 let rememberedJsons = [];
+let clearInferenceCacheNextLoad = false;
 
 // One resize listener for the whole page is substantially cheaper than one
 // listener per card, especially when a page contains dozens of cards.
@@ -137,12 +140,14 @@ function cloneAnnotationSnapshot(annotation) {
     verdict: annotation.verdict || "",
     greenDefect: Boolean(annotation.greenDefect),
     greenDefectRegions: Array.isArray(annotation.greenDefectRegions) ? annotation.greenDefectRegions.map((item) => ({ ...item })) : [],
+    inferenceRemovedRegions: Array.isArray(annotation.inferenceRemovedRegions) ? annotation.inferenceRemovedRegions.map((item) => ({ ...item })) : [],
     detectionIssues: Array.isArray(annotation.detectionIssues) ? [...annotation.detectionIssues] : [],
     missRegions: Array.isArray(annotation.missRegions) ? annotation.missRegions.map((item) => ({ ...item })) : [],
     falseRegions: Array.isArray(annotation.falseRegions) ? annotation.falseRegions.map((item) => ({ ...item })) : [],
     note: annotation.note || "",
     imageName: annotation.imageName || "",
     updatedAt: annotation.updatedAt || "",
+      inferenceRegions: Array.isArray(annotation.inferenceRegions) ? annotation.inferenceRegions.map((item) => ({ ...item })) : [],
   };
 }
 
@@ -152,12 +157,14 @@ function buildSavedSnapshotFromState(state) {
     verdict: state.verdict,
     greenDefect: state.greenDefect,
     greenDefectRegions: state.greenDefectRegions,
+    inferenceRemovedRegions: state.inferenceRemovedRegions,
     detectionIssues: state.detectionIssues,
     missRegions: state.missRegions,
     falseRegions: state.falseRegions,
     note: state.note,
     imageName: state.item.name,
     updatedAt: nowIso(),
+      inferenceRegions: state.inferenceRegions,
   });
 }
 
@@ -350,6 +357,8 @@ function normalizeAnnotation(annotation = {}) {
     : (annotation.defectType ? [annotation.defectType] : []);
   const missRegions = Array.isArray(annotation.missRegions) ? annotation.missRegions : [];
   const falseRegions = Array.isArray(annotation.falseRegions) ? annotation.falseRegions : [];
+  const inferenceRegions = Array.isArray(annotation.inferenceRegions) ? annotation.inferenceRegions : [];
+  const inferenceRemovedRegions = Array.isArray(annotation.inferenceRemovedRegions) ? annotation.inferenceRemovedRegions : [];
   if (missRegions.length && !issues.includes("漏检")) issues.push("漏检");
   if (falseRegions.length && !issues.includes("错检")) issues.push("错检");
   const verdict = verdictMap[annotation.verdict] || annotation.verdict || "";
@@ -358,10 +367,41 @@ function normalizeAnnotation(annotation = {}) {
     verdict,
     greenDefect: greenDefectAllowed && Boolean(annotation.greenDefect),
     greenDefectRegions: greenDefectAllowed && Array.isArray(annotation.greenDefectRegions) ? annotation.greenDefectRegions : [],
+    inferenceRegions,
+    inferenceRemovedRegions,
     detectionIssues: issues.filter((issue, index, arr) => ["漏检", "错检"].includes(issue) && arr.indexOf(issue) === index),
     missRegions,
     falseRegions,
     note: annotation.note || "",
+  };
+}
+
+function toPixelInferenceRegion(region, item) {
+  if (!region || typeof region !== "object") return null;
+  const rawX = Number(region.x);
+  const rawY = Number(region.y);
+  const rawW = Number(region.w);
+  const rawH = Number(region.h);
+  if (![rawX, rawY, rawW, rawH].every((value) => Number.isFinite(value))) return null;
+
+  const looksNormalized = rawX >= 0 && rawY >= 0 && rawW >= 0 && rawH >= 0
+    && rawX <= 1.000001 && rawY <= 1.000001 && rawW <= 1.000001 && rawH <= 1.000001;
+
+  const width = Number(item?.width || 0);
+  const height = Number(item?.height || 0);
+  const x = looksNormalized ? rawX * width : rawX;
+  const y = looksNormalized ? rawY * height : rawY;
+  const w = looksNormalized ? rawW * width : rawW;
+  const h = looksNormalized ? rawH * height : rawH;
+  if (!(w > 0 && h > 0)) return null;
+
+  return {
+    ...region,
+    x,
+    y,
+    w,
+    h,
+    label: String(region.label || region.note || region.className || "推理框"),
   };
 }
 
@@ -380,6 +420,7 @@ function getParams() {
     shuffle: controls.shuffleImages.checked ? "true" : "false",
     shuffle_seed: shuffleSeed,
     json_first: controls.jsonFirst.checked ? "true" : "false",
+    clear_cache: clearInferenceCacheNextLoad && controls.resultJsonClearCache?.checked ? "true" : "false",
     confusion_cell: confusionFilter.cell,
     confusion_light: confusionFilter.light,
     page: controls.page.value || "1",
@@ -395,6 +436,15 @@ function updateImagePathExportLink() {
   params.delete("shuffle_seed");
   params.delete("json_first");
   controls.exportImagePaths.href = `/api/export-image-paths?${params.toString()}`;
+}
+
+function updateAnnotationsExportLink() {
+  if (!controls.exportAnnotations) return;
+  const params = new URLSearchParams({
+    result_json: controls.resultJson?.value.trim() || "",
+    project_dir: controls.projectDir?.value.trim() || "",
+  });
+  controls.exportAnnotations.href = `/api/annotations?${params.toString()}`;
 }
 
 function uniqueNonEmptyStrings(values) {
@@ -533,8 +583,10 @@ function renderJsonOptions(items = []) {
       controls.resultJson.value = item.path || "";
       controls.page.value = "1";
       shuffleSeed = String(Date.now());
+      clearInferenceCacheNextLoad = true;
       rememberJsonPath(item.path || "");
       updateImagePathExportLink();
+      updateAnnotationsExportLink();
       loadImages();
     });
     fragment.appendChild(button);
@@ -618,7 +670,8 @@ async function loadImages() {
     const searchText = data.imageSearch ? ` | 查找：${data.imageSearch}` : "";
     const modelFilterText = data.modelPredictionFilter && data.modelPredictionFilter !== "All" ? ` | 模型判定：${data.modelPredictionFilter}` : "";
     const matrixFilterText = data.confusionCell ? ` | 矩阵筛选：${data.confusionLight || "全部 light"} / ${data.confusionCell}` : "";
-    setStatus(`状态：总计 ${data.total} 张 | 当前第 ${data.page} / ${data.totalPages} 页 | 当前 Batch 分辨率 ${data.batchWidth}x${data.batchHeight}${shuffleText}${jsonFirstText}${modelFilterText}${searchText}${matrixFilterText} | 数据源 ${data.baseDir || "-"}`);
+    const cacheText = data.cacheCleared ? " | 已清理推理缓存" : "";
+    setStatus(`状态：总计 ${data.total} 张 | 当前第 ${data.page} / ${data.totalPages} 页 | 当前 Batch 分辨率 ${data.batchWidth}x${data.batchHeight}${shuffleText}${jsonFirstText}${modelFilterText}${searchText}${matrixFilterText}${cacheText} | 数据源 ${data.baseDir || "-"}`);
     // Build the whole page off-DOM, then attach it once to avoid repeated
     // layout/repaint work when a page contains many cards.
     const fragment = document.createDocumentFragment();
@@ -628,6 +681,8 @@ async function loadImages() {
   } catch (error) {
     setStatus(error.message, true);
     updateBulkDefaultAction();
+  } finally {
+    clearInferenceCacheNextLoad = false;
   }
 }
 
@@ -640,12 +695,22 @@ function renderCard(item, container = gallery) {
   const noteInput = node.querySelector("textarea");
 
   const annotation = normalizeAnnotation(item.annotation);
+  const annotationInferenceBase = Array.isArray(annotation.inferenceRegions)
+    ? annotation.inferenceRegions
+      .map((region) => toPixelInferenceRegion(region, item))
+      .filter(Boolean)
+    : [];
   const state = {
     item,
     verdict: annotation.verdict,
     savedTagged: annotation.verdict === "分类正确" || annotation.verdict === "分类错误",
     greenDefect: annotation.greenDefect,
     greenDefectRegions: annotation.greenDefectRegions,
+    baseInferenceRegions: annotationInferenceBase.length
+      ? annotationInferenceBase
+      : (Array.isArray(item?.predictionOverlay?.detection) ? item.predictionOverlay.detection.map((region) => ({ ...region })) : []),
+    inferenceRemovedRegions: Array.isArray(annotation.inferenceRemovedRegions) ? annotation.inferenceRemovedRegions.map((region) => ({ ...region })) : [],
+    inferenceRegions: [],
     detectionIssues: annotation.detectionIssues,
     missRegions: annotation.missRegions,
     falseRegions: annotation.falseRegions,
@@ -657,6 +722,7 @@ function renderCard(item, container = gallery) {
     serverSnapshot: isTagged({ verdict: annotation.verdict }) ? cloneAnnotationSnapshot(annotation) : null,
     undoSnapshot: null,
   };
+  syncInferenceRegionsFromState(state);
   updateTaggedState(node, state, stateLabel);
 
   node.querySelector(".image-name").textContent = item.name;
@@ -728,7 +794,21 @@ function renderCard(item, container = gallery) {
   });
 
   node.querySelector('[data-action="undo"]').addEventListener("click", () => {
-    getActiveRegions(state).pop();
+    const popped = getActiveRegions(state).pop();
+    if (state.activeIssue === "错检" && popped?.source === "converted_from_inference") {
+      const targetSig = regionSignature({
+        x: popped.x,
+        y: popped.y,
+        w: popped.w,
+        h: popped.h,
+        label: popped.note || "",
+      });
+      const index = state.inferenceRemovedRegions.findIndex((region) => regionSignature(region) === targetSig);
+      if (index >= 0) {
+        state.inferenceRemovedRegions.splice(index, 1);
+        syncInferenceRegionsFromState(state);
+      }
+    }
     drawRegions(canvas, state);
   });
 
@@ -737,6 +817,8 @@ function renderCard(item, container = gallery) {
       state.missRegions = [];
     } else if (state.activeIssue === "错检") {
       state.falseRegions = [];
+      state.inferenceRemovedRegions = [];
+      syncInferenceRegionsFromState(state);
     } else if (state.activeIssue === "绿色缺陷") {
       state.greenDefectRegions = [];
     }
@@ -744,6 +826,13 @@ function renderCard(item, container = gallery) {
   });
 
   canvas.addEventListener("pointerdown", (event) => {
+    if (state.activeIssue === "错检") {
+      const converted = convertInferenceRegionToFalse(event, canvas, state);
+      if (converted) {
+        drawRegions(canvas, state);
+        return;
+      }
+    }
     if (!canDrawActiveIssue(state)) return;
     canvas.setPointerCapture(event.pointerId);
     state.drawing = true;
@@ -796,6 +885,8 @@ function renderCard(item, container = gallery) {
           verdict: state.verdict,
           greenDefect: state.greenDefect,
           greenDefectRegions: state.greenDefectRegions,
+          inferenceRegions: state.inferenceRegions,
+          inferenceRemovedRegions: state.inferenceRemovedRegions,
           detectionIssues: state.detectionIssues,
           missRegions: state.missRegions,
           falseRegions: state.falseRegions,
@@ -840,6 +931,13 @@ function renderCard(item, container = gallery) {
         state.verdict = restored.verdict;
         state.greenDefect = restored.greenDefect;
         state.greenDefectRegions = restored.greenDefectRegions;
+        if (Array.isArray(restored.inferenceRegions) && restored.inferenceRegions.length) {
+          state.baseInferenceRegions = restored.inferenceRegions
+            .map((region) => toPixelInferenceRegion(region, state.item))
+            .filter(Boolean);
+        }
+        state.inferenceRemovedRegions = restored.inferenceRemovedRegions;
+        syncInferenceRegionsFromState(state);
         state.detectionIssues = restored.detectionIssues;
         state.missRegions = restored.missRegions;
         state.falseRegions = restored.falseRegions;
@@ -916,7 +1014,11 @@ function updateButtons(node, state) {
   node.querySelector(".image-wrap").classList.toggle("disabled", !canDrawActiveIssue(state));
   const hint = node.querySelector(".active-draw-hint");
   if (hint) {
-    hint.textContent = state.activeIssue ? `当前画框：${state.activeIssue}` : "选择漏检、错检或绿色缺陷后，在图片上拖拽画框。";
+    if (state.activeIssue === "错检") {
+      hint.textContent = "当前模式：错检。可直接点击原始推理框转为错检框，或手动拖拽画框。";
+    } else {
+      hint.textContent = state.activeIssue ? `当前画框：${state.activeIssue}` : "选择漏检、错检或绿色缺陷后，在图片上拖拽画框。";
+    }
   }
 }
 
@@ -931,6 +1033,71 @@ function getActiveRegions(state) {
   if (state.activeIssue === "错检") return state.falseRegions;
   if (state.activeIssue === "绿色缺陷") return state.greenDefectRegions;
   return state.missRegions;
+}
+
+function regionSignature(region = {}) {
+  const x = Number(region.x || 0).toFixed(6);
+  const y = Number(region.y || 0).toFixed(6);
+  const w = Number(region.w || 0).toFixed(6);
+  const h = Number(region.h || 0).toFixed(6);
+  const label = String(region.label || "");
+  return `${x}|${y}|${w}|${h}|${label}`;
+}
+
+function syncInferenceRegionsFromState(state) {
+  const removed = new Set((state.inferenceRemovedRegions || []).map((region) => regionSignature(region)));
+  state.inferenceRegions = (state.baseInferenceRegions || [])
+    .filter((region) => !removed.has(regionSignature(region)))
+    .map((region) => ({ ...region }));
+}
+
+function findInferenceRegionAtPoint(state, point, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const tolerancePx = 8;
+  const toleranceX = rect.width > 0 ? (tolerancePx / rect.width) * state.item.width : 0;
+  const toleranceY = rect.height > 0 ? (tolerancePx / rect.height) * state.item.height : 0;
+  for (let index = (state.inferenceRegions?.length || 0) - 1; index >= 0; index -= 1) {
+    const region = state.inferenceRegions[index];
+    if (!region) continue;
+    if (
+      point.x >= region.x - toleranceX
+      && point.x <= region.x + region.w + toleranceX
+      && point.y >= region.y - toleranceY
+      && point.y <= region.y + region.h + toleranceY
+    ) {
+      return { index, region };
+    }
+  }
+  return null;
+}
+
+function convertInferenceRegionToFalse(event, canvas, state) {
+  if (state.activeIssue !== "错检") return false;
+  if (!state.detectionIssues.includes("错检")) return false;
+
+  const point = eventToImagePoint(event, canvas, state.item);
+  const hit = findInferenceRegionAtPoint(state, point, canvas);
+  if (!hit) return false;
+
+  const hitRegion = hit.region;
+  state.falseRegions.push({
+    x: hitRegion.x,
+    y: hitRegion.y,
+    w: hitRegion.w,
+    h: hitRegion.h,
+    className: "错检",
+    note: String(hitRegion.label || ""),
+    source: "converted_from_inference",
+  });
+  state.inferenceRemovedRegions.push({
+    x: hitRegion.x,
+    y: hitRegion.y,
+    w: hitRegion.w,
+    h: hitRegion.h,
+    label: String(hitRegion.label || ""),
+  });
+  syncInferenceRegionsFromState(state);
+  return true;
 }
 
 function syncCanvasSize(img, canvas) {
@@ -963,19 +1130,21 @@ function drawRegions(canvas, state) {
 }
 
 function drawPredictionOverlay(ctx, canvas, state) {
-  const overlay = state.item?.predictionOverlay?.analyse;
+  const overlay = state.inferenceRegions;
   if (!Array.isArray(overlay) || !overlay.length) return;
 
   overlay.filter(Boolean).forEach((region) => {
     const display = imageRectToDisplay(region, canvas, state.item);
-    const stroke = region.stroke || "#b42318";
+    const stroke = "#e59f17";
     const label = region.label || "";
 
     ctx.lineWidth = 2;
     ctx.strokeStyle = stroke;
+    ctx.setLineDash([7, 4]);
     if (display.w > 0 && display.h > 0) {
       ctx.strokeRect(display.x, display.y, display.w, display.h);
     }
+    ctx.setLineDash([]);
 
     if (label) {
       ctx.font = "12px 'Segoe UI', 'Microsoft YaHei', Arial, sans-serif";
@@ -1107,6 +1276,7 @@ async function undoBulkDefaultCurrentPage() {
 
 controls.loadBtn.addEventListener("click", () => {
   shuffleSeed = String(Date.now());
+  clearInferenceCacheNextLoad = true;
   loadImages();
 });
 if (controls.prevPage) {
@@ -1145,6 +1315,10 @@ if (controls.exportImagePaths) {
   controls.exportImagePaths.addEventListener("click", updateImagePathExportLink);
   updateImagePathExportLink();
 }
+if (controls.exportAnnotations) {
+  controls.exportAnnotations.addEventListener("click", updateAnnotationsExportLink);
+  updateAnnotationsExportLink();
+}
 if (statsEls.refresh) {
   statsEls.refresh.addEventListener("click", loadStats);
 }
@@ -1165,12 +1339,14 @@ if (statsEls.refresh) {
   control.addEventListener("change", () => {
     controls.page.value = "1";
     updateImagePathExportLink();
+    updateAnnotationsExportLink();
   });
 });
 
 if (controls.resultJson) {
   controls.resultJson.addEventListener("input", () => {
     updateImagePathExportLink();
+    updateAnnotationsExportLink();
     rememberJsonPath(controls.resultJson.value);
     refreshJsonOptionsPanel();
   });
@@ -1185,7 +1361,9 @@ if (controls.resultJsonSelect) {
     if (selectedValue) {
       rememberJsonPath(selectedValue);
     }
+    clearInferenceCacheNextLoad = true;
     updateImagePathExportLink();
+    updateAnnotationsExportLink();
     refreshJsonOptionsPanel();
   });
 }
