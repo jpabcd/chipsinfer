@@ -4,10 +4,10 @@
       "name": "light_1",
       "weight": "./my_weights/20260810-101202-f14b543b-light1/output/train/weights/best.pt",
       "analyse": {
-        "可忽略-人工类 1":{
+        "中间线":{
           "enabled": false
         },
-        "可忽略-人工类 2":{"area": {">": 500}}
+        "可忽略-曝点":{"area": {">": 500}}
       },
         "crop_width": 795,
         "crop_height": 161,
