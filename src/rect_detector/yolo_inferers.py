@@ -303,7 +303,11 @@ def _load_model(config: YoloInfererConfig) -> tuple[Any, dict[int, str]]:
                     quantize=config.quantize,
                     imgsz=config.imgsz,
                     device=config.device,
-                    nms=True,
+                    # TensorRT 11 uses ModelOpt to bake FP16 into ONNX. Embedded NMS
+                    # contains a Concat of boxes, scores, and cast class IDs that
+                    # ModelOpt 0.44 can convert to inconsistent FP16/FP32 inputs.
+                    # Export raw predictions and let Ultralytics run NMS instead.
+                    nms=False,
                 )
                 exported_path = Path(str(exported))
                 if exported_path.exists() and exported_path.resolve() != load_path.resolve():

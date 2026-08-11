@@ -2,12 +2,12 @@
   "lights": [
     {
       "name": "light_1",
-      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/Detectors/rect_detector/my_weights/20260730-130552-18238086-light1/output/train/weights/best.pt",
+      "weight": "./my_weights/20260810-101202-f14b543b-light1/output/train/weights/best.pt",
       "analyse": {
         "可忽略-人工类 1":{
           "enabled": false
         },
-        "可忽略-人工类 2":{"area": {">": 400}}
+        "可忽略-人工类 2":{"area": {">": 500}}
       },
         "crop_width": 795,
         "crop_height": 161,
@@ -25,9 +25,9 @@
     },
     {
       "name": "light_2",
-      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/Detectors/rect_detector/my_weights/20260730-173533-069dfdef-light2/output/train/weights/best.pt",
+      "weight": "./my_weights/20260807-200159-fb52508b-light2/output/train/weights/best.pt",
       "analyse": {
-        "可忽略-曝点":{"area": {">": 400}}
+        "可忽略-曝点":{"area": {">": 500}}
       },
         "crop_width": 795,
         "crop_height": 161,
@@ -45,12 +45,12 @@
     },
     {
       "name": "light_3",
-      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/Detectors/rect_detector/my_weights/20260802-190502-4ebc8e9e-light3/output/train/weights/best.pt",
+      "weight": "./my_weights/20260802-190502-4ebc8e9e-light3/output/train/weights/best.pt",
       "analyse": {
           "中间线": {
             "enabled": false
           },
-        "可忽略-曝点":{"area": {">": 400}}
+        "可忽略-曝点":{"area": {">": 500}}
       },
         "crop_width": 795,
         "crop_height": 161,
@@ -58,7 +58,7 @@
         "iou": 0.7,
         "imgsz": 320,
         "device": "0",
-        "quantize": null,
+        "quantize": 16,
         "use_engine": true,
         "yolo_batch": 256,
         "yolo_stream": true,
@@ -68,13 +68,13 @@
     },
     {
       "name": "light_4",
-      "weight": "/workspace/zhangruxiiang/codes/20260701/code2/Detectors/rect_detector/my_weights/20260802-175347-def1e94a-light4/output/train/weights/best.pt",
+      "weight": "./my_weights/20260807-163811-a3041272-light4/output/train/weights/best.pt",
       "analyse": {
           "中间线": {
             "enabled": false
           },
           "细线问题":{"confidence": {">": 0.5}},
-            "可忽略-曝点":{"area": {">": 400}}
+            "可忽略-曝点":{"area": {">": 500}}
           },
           "crop_width": 795,
           "crop_height": 161,
@@ -82,7 +82,7 @@
           "iou": 0.7,
           "imgsz": 320,
           "device": "0",
-          "quantize": null,
+          "quantize": 16,
           "use_engine": true,
           "yolo_batch": 256,
           "yolo_stream": true,
