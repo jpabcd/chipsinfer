@@ -24,8 +24,8 @@ CMD=(
   --persistent-workers
   --prefetch-factor 2
   --light-read-workers 4
-  --no-save-predict-input
-  #--save-predict-input
+  #--no-save-predict-input
+  --save-predict-input
   --output-dir "$OUTPUT_DIR"
   --output-json "$OUTPUT_DIR/json/main_inferer_dataloader_results.json"
   --predict-input-root "$OUTPUT_DIR/predict_input"
