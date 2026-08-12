@@ -81,6 +81,12 @@ def run_product(
         action=argparse.BooleanOptionalAction,
         default=True,
     )
+    parser.add_argument(
+        "--save-predict-input-only-with-boxes",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="When saving crops, save only crops where YOLO detected at least one box.",
+    )
     parser.add_argument("--predict-input-root", type=str, default="")
     parser.add_argument(
         "--defect-report",
@@ -203,6 +209,11 @@ def run_product(
         infer_args.append("--save-predict-input")
     else:
         infer_args.append("--no-save-predict-input")
+    infer_args.append(
+        "--save-predict-input-only-with-boxes"
+        if args.save_predict_input_only_with_boxes
+        else "--no-save-predict-input-only-with-boxes"
+    )
 
     inferer = infer_dataloader_main(infer_args, inferer=inferer)
 

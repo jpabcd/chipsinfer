@@ -8,6 +8,7 @@ import pickle
 import re
 import shutil
 import threading
+import time
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -365,6 +366,7 @@ def restore_model_prediction_index(items):
 
 def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
     """Build one normalized base list. Call through _load_inference_base_items."""
+    load_started = time.perf_counter()
     # Persist the normalized base list once. Unlike the previous implementation,
     # changing light/search/model filters no longer reparses a 300+ MB JSON file.
     base_cache_id = hashlib.sha256(repr(base_key).encode("utf-8")).hexdigest()
@@ -376,10 +378,20 @@ def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
             restore_model_prediction_index(cached)
             with INFERENCE_CACHE_LOCK:
                 INFERENCE_BASE_CACHE[base_key] = cached
+            print(
+                f"Inference disk cache loaded: items={len(cached)} "
+                f"elapsed_s={time.perf_counter() - load_started:.3f} path={base_disk_cache_path}",
+                flush=True,
+            )
             return cached
     except (OSError, EOFError, pickle.PickleError, ValueError):
         pass
 
+    parser_name = "orjson" if orjson is not None else "stdlib json"
+    print(
+        f"Inference cache miss; parsing result JSON with {parser_name}: {result_json_path}",
+        flush=True,
+    )
     if orjson is not None:
         payload = orjson.loads(result_json_path.read_bytes())
     else:
@@ -468,6 +480,11 @@ def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
         temp_cache_path.replace(base_disk_cache_path)
     except OSError:
         pass
+    print(
+        f"Inference cache built: items={len(items)} "
+        f"elapsed_s={time.perf_counter() - load_started:.3f} path={base_disk_cache_path}",
+        flush=True,
+    )
     return items
 
 
@@ -1813,6 +1830,8 @@ def main():
     print(f"Annotations: {ANNOTATION_FILE}", flush=True)
     print(f"Result JSON: {CONFIGURED_RESULT_JSON}", flush=True)
     print(f"Project directory: {PROJECT_DIR}", flush=True)
+    print(f"JSON parser: {'orjson' if orjson is not None else 'stdlib json (slow fallback)'}", flush=True)
+    print(f"Inference cache directory: {INFERENCE_DISK_CACHE_DIR}", flush=True)
     if not Path(CONFIGURED_RESULT_JSON).is_file():
         print("Result JSON not found yet; enter a valid JSON path in the web page when ready.", flush=True)
     else:

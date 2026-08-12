@@ -64,6 +64,7 @@ class YoloInfererConfig:
     crop_height: int = DEFAULT_CROP_HEIGHT
     draw: bool = False
     save_predict_input: bool = False
+    save_predict_input_only_with_boxes: bool = False
     verbose: bool = False
 
     def __post_init__(self) -> None:
@@ -108,6 +109,9 @@ class CombinedYoloInferersConfig:
             "crop_height": int(config.get("crop_height", DEFAULT_CROP_HEIGHT)),
             "draw": bool(config.get("draw", False)),
             "save_predict_input": bool(config.get("save_predict_input", False)),
+            "save_predict_input_only_with_boxes": bool(
+                config.get("save_predict_input_only_with_boxes", False)
+            ),
             "verbose": bool(config.get("verbose", False)),
         }
         raw_lights = config.get("lights")
@@ -130,7 +134,10 @@ class CombinedYoloInferersConfig:
             light_options["yolo_warmup"] = int(light_options["yolo_warmup"])
             light_options["crop_width"] = int(light_options["crop_width"])
             light_options["crop_height"] = int(light_options["crop_height"])
-            for key in ("use_engine", "yolo_stream", "draw", "save_predict_input", "verbose"):
+            for key in (
+                "use_engine", "yolo_stream", "draw", "save_predict_input",
+                "save_predict_input_only_with_boxes", "verbose",
+            ):
                 light_options[key] = bool(light_options[key])
             lights.append(
                 YoloInfererConfig(
@@ -452,6 +459,7 @@ class YoloInferer:
         self.draw = bool(config.draw)
         self.draw_dir = Path("temp")
         self.save_predict_input = bool(config.save_predict_input)
+        self.save_predict_input_only_with_boxes = bool(config.save_predict_input_only_with_boxes)
         self.predict_input_dir = Path("temp") / "predict_input"
         if self.draw:
             self._ensure_draw_dir()
@@ -642,17 +650,15 @@ class YoloInferer:
 
     def _predict_input_output_path(self, prediction: YoloPrediction) -> Path:
         mech = prediction.aligned_rect.mech
-        mx_text = f"{float(mech.MX):.3f}".replace(".", "p")
-        my_text = f"{float(mech.MY):.3f}".replace(".", "p")
         file_name = (
-            f"{prediction.light_name}_MX{mx_text}_MY{my_text}_"
-            f"img{mech.nImageNum}_idx{mech.nIndex}_rect{prediction.rect_id}.png"
+            f"{prediction.light_name}_img{mech.nImageNum}_"
+            f"idx{mech.nIndex}_rect{prediction.rect_id}.png"
         )
-        return self.predict_input_dir / file_name
+        return self.predict_input_dir / prediction.light_name / file_name
 
     def _save_predict_input(self, prediction: YoloPrediction, crop_img: np.ndarray) -> None:
-        self._ensure_predict_input_dir()
         out_path = self._predict_input_output_path(prediction)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         if cv2 is not None:
             cv2.imwrite(str(out_path), cv2.cvtColor(_to_yolo_image(crop_img), cv2.COLOR_RGB2BGR))
             return
@@ -731,7 +737,9 @@ class YoloInferer:
             ):
                 prediction = self._analyse_result(result, aligned_rect, crop_box)
                 light_results[batch_index].predictions.append(prediction)
-                if self.save_predict_input:
+                if self.save_predict_input and (
+                    not self.save_predict_input_only_with_boxes or prediction.detections
+                ):
                     self._save_predict_input(prediction, crop_img)
                 if self.draw:
                     drawn_crop = self._draw_prediction(
@@ -790,6 +798,10 @@ class CombinedYoloInferers:
             inferer.save_predict_input = enabled
             if enabled:
                 inferer._ensure_predict_input_dir()
+
+    def set_save_predict_input_only_with_boxes(self, enabled: bool) -> None:
+        for inferer in self.inferers.values():
+            inferer.save_predict_input_only_with_boxes = enabled
 
     def set_predict_input_dir(self, directory: str | Path) -> None:
         for inferer in self.inferers.values():

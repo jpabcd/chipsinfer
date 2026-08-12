@@ -1,4 +1,5 @@
 numpy
+orjson
 Pillow
 opencv-python-headless
 gradio

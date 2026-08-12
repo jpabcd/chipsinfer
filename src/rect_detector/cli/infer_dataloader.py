@@ -123,6 +123,12 @@ def main(
         help="Save original crops passed to model.predict and include path_ in exported JSON.",
     )
     parser.add_argument(
+        "--save-predict-input-only-with-boxes",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="When saving crops, save only crops where YOLO detected at least one box.",
+    )
+    parser.add_argument(
         "--predict-input-root",
         type=Path,
         default=Path("outputs") / "predict_input",
@@ -195,6 +201,9 @@ def main(
     inferer.yolo_inferers.set_trace_batching(args.trace_batches)
     inferer.yolo_inferers.set_predict_input_dir(args.predict_input_root)
     inferer.yolo_inferers.set_save_predict_input(args.save_predict_input)
+    inferer.yolo_inferers.set_save_predict_input_only_with_boxes(
+        args.save_predict_input_only_with_boxes
+    )
 
     total_batches = 0
     total_samples_seen = 0

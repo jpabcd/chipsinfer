@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,11 +43,9 @@ def _safe_relpath(path: Path, base: Path) -> str:
 
 def _prediction_source_file_name(prediction: YoloPrediction) -> str:
     mech = prediction.aligned_rect.mech
-    mx_text = f"{float(mech.MX):.3f}".replace(".", "p")
-    my_text = f"{float(mech.MY):.3f}".replace(".", "p")
     return (
-        f"{prediction.light_name}_MX{mx_text}_MY{my_text}_"
-        f"img{mech.nImageNum}_idx{mech.nIndex}_rect{prediction.rect_id}.png"
+        f"{prediction.light_name}_img{mech.nImageNum}_"
+        f"idx{mech.nIndex}_rect{prediction.rect_id}.png"
     )
 
 
@@ -57,17 +54,8 @@ def _structured_predict_input_path(
     sample_id: int,
     predict_input_root: Path,
 ) -> Path:
-    mech = prediction.aligned_rect.mech
-    mx_text = f"{float(mech.MX):.3f}"
-    my_text = f"{float(mech.MY):.3f}"
-    folder = (
-        predict_input_root
-        / prediction.light_name
-        / f"sample_id_{sample_id}"
-        / f"MX_{mx_text}_MY_{my_text}"
-    )
-    file_name = f"chip_img{mech.nImageNum}_idx{mech.nIndex}_rect{prediction.rect_id}.png"
-    return folder / file_name
+    del sample_id
+    return predict_input_root / prediction.light_name / _prediction_source_file_name(prediction)
 
 
 def _relocate_predict_input_if_exists(
@@ -75,18 +63,13 @@ def _relocate_predict_input_if_exists(
     sample_id: int,
     predict_input_root: Path,
 ) -> Path | None:
-    source_path = predict_input_root / _prediction_source_file_name(prediction)
-    if not source_path.exists():
-        return None
-
     target_path = _structured_predict_input_path(
         prediction=prediction,
         sample_id=sample_id,
         predict_input_root=predict_input_root,
     )
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    if target_path != source_path:
-        shutil.move(str(source_path), str(target_path))
+    if not target_path.exists():
+        return None
     return target_path
 
 
@@ -338,6 +321,12 @@ def main() -> None:
         help="Save original crops passed to model.predict and include path_ in exported JSON.",
     )
     parser.add_argument(
+        "--save-predict-input-only-with-boxes",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="When saving crops, save only crops where YOLO detected at least one box.",
+    )
+    parser.add_argument(
         "--predict-input-root",
         type=Path,
         default=Path("temp") / "predict_input",
@@ -381,6 +370,9 @@ def main() -> None:
     if args.trace_batches:
         combined_yolo_inferers.set_trace_batching(True)
     combined_yolo_inferers.set_save_predict_input(args.save_predict_input)
+    combined_yolo_inferers.set_save_predict_input_only_with_boxes(
+        args.save_predict_input_only_with_boxes
+    )
     combined_yolo_inferers.set_predict_input_dir(args.predict_input_root)
 
     main_inferer = MainInferer(

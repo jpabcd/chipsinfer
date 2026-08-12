@@ -89,7 +89,12 @@ def validate_runtime_config(config: Mapping[str, Any]) -> None:
             "light_read_workers", "max_batches", "max_samples", "unsafe_missing_ok",
             "trace_batches",
         },
-        "outputs": {"defect_report", "auto_external_xy_csv", "save_predict_input"},
+        "outputs": {
+            "defect_report",
+            "auto_external_xy_csv",
+            "save_predict_input",
+            "save_predict_input_only_with_boxes",
+        },
     }
     for section, allowed_fields in allowed.items():
         values = _require_mapping(config.get(section, {}), f"runtime config '{section}'")
@@ -157,6 +162,9 @@ def runtime_defaults(config: Mapping[str, Any]) -> dict[str, Any]:
         "defect_report": bool(outputs.get("defect_report", True)),
         "auto_external_xy_csv": bool(outputs.get("auto_external_xy_csv", True)),
         "save_predict_input": bool(outputs.get("save_predict_input", False)),
+        "save_predict_input_only_with_boxes": bool(
+            outputs.get("save_predict_input_only_with_boxes", False)
+        ),
         "inference": inference,
     }
 

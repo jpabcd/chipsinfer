@@ -87,7 +87,7 @@ def _build_product_args(
 ) -> list[str]:
     product_name = product_dir.name
     output_json_path = product_output_dir / "json" / f"{product_name}.json"
-    predict_input_root = product_output_dir / "predict_input" / product_name
+    predict_input_root = product_output_dir / "predict_input"
     product_args = [
         str(product_dir),
         *forwarded_args,
@@ -233,6 +233,12 @@ def _parse_args(argv: list[str] | None) -> tuple[argparse.Namespace, list[str]]:
         default=defaults["save_predict_input"],
         help="Save model input crops for every product. Default: disabled.",
     )
+    parser.add_argument(
+        "--save-predict-input-only-with-boxes",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["save_predict_input_only_with_boxes"],
+        help="When saving crops, save only crops where YOLO detected at least one box.",
+    )
     args, cli_forwarded_args = parser.parse_known_args(argv)
 
     forwarded_args = [
@@ -242,6 +248,11 @@ def _parse_args(argv: list[str] | None) -> tuple[argparse.Namespace, list[str]]:
     ]
     forwarded_args.append(
         "--save-predict-input" if args.save_predict_input else "--no-save-predict-input"
+    )
+    forwarded_args.append(
+        "--save-predict-input-only-with-boxes"
+        if args.save_predict_input_only_with_boxes
+        else "--no-save-predict-input-only-with-boxes"
     )
 
     managed_option = _has_managed_option(forwarded_args)

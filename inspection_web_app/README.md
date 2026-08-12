@@ -42,6 +42,18 @@ http://127.0.0.1:7868
 
 如果你已经启动过旧版本，需要先关闭原来的 PowerShell 服务窗口，重新执行启动命令，页面才会加载最新功能。
 
+### 另一台电脑首次加载较慢
+
+推理结果 JSON 通常超过 300 MB。解析缓存位于 `inspection_web_app/.inference_cache/`，它是与 JSON 的绝对路径、修改时间、文件大小和工程目录绑定的本机缓存，因此移动到另一台电脑后第一次必须重新建立。第一次完成后，只要 JSON 路径和内容不变，后续启动会直接读取缓存。
+
+请先在新电脑使用项目对应的 Python 环境安装 `requirements.txt`，其中 `orjson` 用于快速解析大型 JSON。启动日志会显示：
+
+- `JSON parser: orjson`：正在使用快速解析器；如果显示 `stdlib json (slow fallback)`，说明启动时使用的 Python 环境没有安装 `orjson`。
+- `Inference cache miss`：当前是首次解析或 JSON/路径发生了变化。
+- `Inference disk cache loaded`：已经命中本机缓存。
+
+缓存目录最好放在本机 SSD。网络盘、机械硬盘以及 Windows 实时杀毒扫描都会明显降低 300 MB JSON 和约 100 MB 缓存文件的读取速度。
+
 ## 导入与导出
 
 点击右上角“下载评价 JSON”可以得到当前所有评价。点击“导入 JSON”选择别人导出的文件，系统会把其中的评价合并到本地 `annotations/annotations.json`。
