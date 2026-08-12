@@ -6,14 +6,15 @@ import mimetypes
 import os
 import pickle
 import re
+import shutil
 import threading
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+import cv2
 import numpy as np
-from PIL import Image
 
 try:
     import orjson
@@ -261,11 +262,12 @@ def get_image_meta_cached(image_path):
     if cached and cached.get("stamp") == stamp:
         return cached.get("width", 0), cached.get("height", 0)
 
-    try:
-        with Image.open(image_path) as image:
-            width, height = image.size
-    except OSError:
+    image = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
+    if image is None:
         width, height = 0, 0
+    else:
+        height, width = image.shape[:2]
+        del image
 
     IMAGE_META_CACHE[cache_key] = {
         "stamp": stamp,
@@ -1317,12 +1319,6 @@ class InspectionHandler(BaseHTTPRequestHandler):
                 items_all = []
                 for original_path in original_paths:
                     display_path = auto_crop_image(original_path, base_dir)
-                    try:
-                        with Image.open(display_path) as img:
-                            width, height = img.size
-                    except Exception:
-                        width, height = 0, 0
-
                     items_all.append({
                         "id": quote(original_path, safe=""),
                         "name": os.path.basename(original_path),
@@ -1331,8 +1327,10 @@ class InspectionHandler(BaseHTTPRequestHandler):
                         "originalPath": original_path,
                         "displayPath": display_path,
                         "imageUrl": "/api/image?path=" + quote(display_path, safe=""),
-                        "width": width,
-                        "height": height,
+                        # Dimensions are decoded with OpenCV only after this
+                        # item enters the requested page.
+                        "width": 0,
+                        "height": 0,
                         "predictionOverlay": {"detection": [], "analyse": []},
                     })
         except (OSError, json.JSONDecodeError, ValueError) as error:
@@ -1380,7 +1378,8 @@ class InspectionHandler(BaseHTTPRequestHandler):
 
         for base_item in page_items:
             item = dict(base_item)
-            width, height = get_image_meta_cached(item.get("originalPath", ""))
+            meta_path = item.get("displayPath") or item.get("originalPath", "")
+            width, height = get_image_meta_cached(meta_path)
             item["width"] = width
             item["height"] = height
             raw_output = item.get("_rawOutput") or {}
@@ -1432,18 +1431,26 @@ class InspectionHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            data = Path(image_path).read_bytes()
+            content_length = os.path.getsize(image_path)
+            image_file = open(image_path, "rb")
         except OSError:
             self.send_error(HTTPStatus.NOT_FOUND, "Image not found")
             return
 
         content_type = mimetypes.guess_type(image_path)[0] or "image/jpeg"
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "public, max-age=3600")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.send_header("Content-Length", str(content_length))
+            self.end_headers()
+            # Stream one visible image at a time. Do not allocate another
+            # full-image bytes object in the Python server.
+            shutil.copyfileobj(image_file, self.wfile, length=1024 * 1024)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            image_file.close()
 
     def handle_save_annotation(self):
         length = int(self.headers.get("Content-Length", "0"))
