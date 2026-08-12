@@ -5,13 +5,17 @@ import importlib
 from pathlib import Path
 
 from rect_detector.cli.infer_dataloader import main as infer_dataloader_main
+from rect_detector.main_inferer import MainInferer
 
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def main(argv: list[str] | None = None) -> None:
+def run_product(
+    argv: list[str] | None = None,
+    inferer: MainInferer | None = None,
+) -> MainInferer:
     parser = argparse.ArgumentParser(
         description="Run rect_detector pipeline on one product directory."
     )
@@ -161,7 +165,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         infer_args.append("--no-save-predict-input")
 
-    infer_dataloader_main(infer_args)
+    inferer = infer_dataloader_main(infer_args, inferer=inferer)
 
     if args.defect_report or args.external_xy_csv_path.strip():
         export_defect_report = importlib.import_module(
@@ -198,6 +202,11 @@ def main(argv: list[str] | None = None) -> None:
         print(f"defect_report={generated_path}")
         if external_xy_csv_path:
             print(f"wafer_map={wafer_map_path}")
+    return inferer
+
+
+def main(argv: list[str] | None = None) -> None:
+    run_product(argv)
 
 
 if __name__ == "__main__":

@@ -20,12 +20,12 @@ WAFER_MAP_CHIP_ASPECT="${WAFER_MAP_CHIP_ASPECT:-5.0}"
 CMD=(
   "$PYTHON_BIN" run_pipeline.py ../../48AMA/imgs/S26G03090-06
   --batch-size 2
-  --num-workers 8
+  --num-workers 4
   --persistent-workers
   --prefetch-factor 2
   --light-read-workers 4
-  #--no-save-predict-input
-  --save-predict-input
+  --no-save-predict-input
+  #--save-predict-input
   --output-dir "$OUTPUT_DIR"
   --output-json "$OUTPUT_DIR/json/main_inferer_dataloader_results.json"
   --predict-input-root "$OUTPUT_DIR/predict_input"

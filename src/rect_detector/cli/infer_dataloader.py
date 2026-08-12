@@ -41,7 +41,10 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(
+    argv: list[str] | None = None,
+    inferer: MainInferer | None = None,
+) -> MainInferer:
     parser = argparse.ArgumentParser(description="Run MainInferer in DataLoader mode from raw files.")
     parser.add_argument("root_dir", type=Path, help="Dataset root directory, e.g. 48AMA/imgs/S26F20082-02")
     parser.add_argument("--batch-size", type=int, default=4)
@@ -142,25 +145,28 @@ def main(argv: list[str] | None = None) -> None:
         light_read_workers=args.light_read_workers,
     )
 
-    rect_inferer = RectInferer(
-        x_scale=args.x_scale,
-        y_scale=args.y_scale,
-        mech_delta_x=args.mech_delta_x,
-        mech_delta_y=args.mech_delta_y,
-        delta_x_pixel=args.delta_x_pixel,
-        delta_y_pixel=args.delta_y_pixel,
-    )
-    combined_yolo_inferers = CombinedYoloInferers.from_json(args.yolo_config)
-    if args.trace_batches:
-        combined_yolo_inferers.set_trace_batching(True)
-    combined_yolo_inferers.set_save_predict_input(args.save_predict_input)
-    combined_yolo_inferers.set_predict_input_dir(args.predict_input_root)
+    if inferer is None:
+        rect_inferer = RectInferer(
+            x_scale=args.x_scale,
+            y_scale=args.y_scale,
+            mech_delta_x=args.mech_delta_x,
+            mech_delta_y=args.mech_delta_y,
+            delta_x_pixel=args.delta_x_pixel,
+            delta_y_pixel=args.delta_y_pixel,
+        )
+        combined_yolo_inferers = CombinedYoloInferers.from_json(args.yolo_config)
+        inferer = MainInferer(
+            rect_inferer=rect_inferer,
+            yolo_inferers=combined_yolo_inferers,
+            allow_partial=not args.strict_align,
+        )
 
-    inferer = MainInferer(
-        rect_inferer=rect_inferer,
-        yolo_inferers=combined_yolo_inferers,
-        allow_partial=not args.strict_align,
-    )
+    # The shared inferer retains model weights, while these settings are specific
+    # to the product currently being processed.
+    inferer.allow_partial = not args.strict_align
+    inferer.yolo_inferers.set_trace_batching(args.trace_batches)
+    inferer.yolo_inferers.set_predict_input_dir(args.predict_input_root)
+    inferer.yolo_inferers.set_save_predict_input(args.save_predict_input)
 
     total_batches = 0
     total_samples_seen = 0
@@ -301,6 +307,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"elapsed_s={run_elapsed:.3f}")
     print(f"inferred_samples_per_s={throughput:.2f}")
     print(f"export_json={safe_relpath(args.output_json, workspace_root)}")
+    return inferer
 
 
 if __name__ == "__main__":

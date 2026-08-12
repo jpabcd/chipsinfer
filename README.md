@@ -13,6 +13,10 @@ It visualizes the final pipeline JSON output and supports manual review.
   - unified product-level pipeline entrypoint
 - `run_pipeline_product.sh`
   - one-command wrapper for `../../48AMA/imgs/S26F20082-02`
+- `run_pipeline_line.py`
+  - chronological production-line runner for all completed product folders in `../../48AMA/imgs`
+- `run_pipeline_line.sh`
+  - one-command 48AMA production-line wrapper
 - `run_main_inferer_dataloader.py`
   - backward-compatible dataloader entrypoint
 - `run_main_inferer_from_raw_files.py`
@@ -24,6 +28,25 @@ It visualizes the final pipeline JSON output and supports manual review.
   - final merged inference JSON
 - `outputs/predict_input/`
   - optional saved model input crops
+
+## 48AMA Production-Line Inference
+
+Process every completed product directory under `../../48AMA/imgs` in directory modification-time order:
+
+```bash
+./run_pipeline_line.sh
+```
+
+Each product has isolated artifacts under `outputs/line_run_YYYYmmdd_HHMMSS/products/PRODUCT_NAME/`. Product artifacts use the product identifier in their names, for example `json/PRODUCT_NAME.json`, `csv/PRODUCT_NAME.csv`, and `plots/PRODUCT_NAME_wafer_map.png`. The `MainInferer` and YOLO model weights are initialized for the first completed product and then reused for the remaining products in the same line-run process.
+The line-level `line_summary.json` records completed, failed, and incomplete products. Folders without all four `LightN-raw` directories or an `IMAGE3_*.raw` file are skipped by default, so a wafer still being written is not inferred prematurely.
+
+For continuous operation, keep a stable output root and enable watch mode:
+
+```bash
+./run_pipeline_line.sh --output-root outputs/48AMA_line --watch --rescan-interval 30
+```
+
+The new runner forwards normal product-inference options, such as `--batch-size`, `--yolo-config`, `--strict-align`, and `--no-save-predict-input`. It manages output paths per product itself. A product-level CSV named `PRODUCT_NAME.csv` is detected automatically and used to generate the product wafer map.
 
 ## Web Visualization
 

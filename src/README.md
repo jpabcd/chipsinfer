@@ -63,3 +63,13 @@ Default outputs are stored under the project directory:
 
 - `outputs/json/main_inferer_dataloader_results.json`
 - `outputs/predict_input/`
+
+## Production-line pipeline entrypoint
+
+Use the production-line runner when `../../48AMA/imgs` contains multiple product folders written over time:
+
+```bash
+python run_pipeline_line.py ../../48AMA/imgs --output-root outputs/48AMA_line
+```
+
+It validates each product folder, orders products by directory modification time, and delegates inference to `rect_detector.cli.pipeline_product`. The first completed product initializes `MainInferer` and the YOLO weights; later products reuse the same objects while resetting product-specific paths. Each product receives its own result JSON, prediction inputs, CSV report, and (when `PRODUCT_NAME.csv` exists) wafer map below `OUTPUT_ROOT/products/PRODUCT_NAME/`. Use `--watch` to continuously discover new completed products; completed products are not run again while the same output root is reused.
