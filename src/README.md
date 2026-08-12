@@ -66,6 +66,8 @@ Default outputs are stored under the project directory:
 
 ## Production-line pipeline entrypoint
 
+Configuration is split into `configs/products/48AMA.json` for product/model/geometry parameters and `configs/runtime/production.json` for paths, worker counts, scanning behavior, and output switches. This allows another line or product to use its own pair of profiles without changing Python source.
+
 Use the production-line runner when `../../48AMA/imgs` contains multiple product folders written over time:
 
 ```bash

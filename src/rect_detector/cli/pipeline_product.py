@@ -56,11 +56,24 @@ def run_product(
     )
     parser.add_argument("--x-scale", type=float, default=0.30)
     parser.add_argument("--y-scale", type=float, default=0.50)
+    parser.add_argument("--threshold", type=int, default=18)
+    parser.add_argument("--x-dilate", type=int, default=45)
+    parser.add_argument("--y-dilate", type=int, default=14)
+    parser.add_argument("--min-width", type=int, default=600)
+    parser.add_argument("--max-width", type=int, default=950)
+    parser.add_argument("--min-height", type=int, default=90)
+    parser.add_argument("--max-height", type=int, default=220)
+    parser.add_argument("--min-aspect", type=float, default=3.6)
+    parser.add_argument("--max-aspect", type=float, default=8.5)
+    parser.add_argument("--min-area", type=int, default=2500)
+    parser.add_argument("--margin", type=int, default=100)
     parser.add_argument("--mech-delta-x", type=float, default=1421.0)
     parser.add_argument("--mech-delta-y", type=float, default=283.0)
     parser.add_argument("--delta-x-pixel", type=float, default=950.0)
     parser.add_argument("--delta-y-pixel", type=float, default=185.0)
     parser.add_argument("--strict-align", action="store_true")
+    parser.add_argument("--allow-x-reverse", action="store_true")
+    parser.add_argument("--allow-y-reverse", action="store_true")
     parser.add_argument("--unsafe-missing-ok", action="store_true")
     parser.add_argument("--trace-batches", action="store_true")
     parser.add_argument(
@@ -137,6 +150,28 @@ def run_product(
         str(args.x_scale),
         "--y-scale",
         str(args.y_scale),
+        "--threshold",
+        str(args.threshold),
+        "--x-dilate",
+        str(args.x_dilate),
+        "--y-dilate",
+        str(args.y_dilate),
+        "--min-width",
+        str(args.min_width),
+        "--max-width",
+        str(args.max_width),
+        "--min-height",
+        str(args.min_height),
+        "--max-height",
+        str(args.max_height),
+        "--min-aspect",
+        str(args.min_aspect),
+        "--max-aspect",
+        str(args.max_aspect),
+        "--min-area",
+        str(args.min_area),
+        "--margin",
+        str(args.margin),
         "--mech-delta-x",
         str(args.mech_delta_x),
         "--mech-delta-y",
@@ -156,6 +191,10 @@ def run_product(
 
     if args.strict_align:
         infer_args.append("--strict-align")
+    if args.allow_x_reverse:
+        infer_args.append("--allow-x-reverse")
+    if args.allow_y_reverse:
+        infer_args.append("--allow-y-reverse")
     if args.unsafe_missing_ok:
         infer_args.append("--unsafe-missing-ok")
     if args.trace_batches:

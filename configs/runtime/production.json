@@ -1,0 +1,34 @@
+{
+  "paths": {
+    "imgs_root": "../../48AMA/imgs",
+    "output_root": "outputs/48AMA_line",
+    "summary_json": null
+  },
+  "line": {
+    "order_by": "mtime",
+    "reverse": false,
+    "max_products": 0,
+    "skip_incomplete": true,
+    "skip_completed": true,
+    "fail_fast": false,
+    "watch": false,
+    "rescan_interval": 30.0,
+    "dry_run": false
+  },
+  "inference": {
+    "batch_size": 2,
+    "num_workers": 8,
+    "persistent_workers": true,
+    "prefetch_factor": 2,
+    "light_read_workers": 4,
+    "max_batches": 0,
+    "max_samples": 0,
+    "unsafe_missing_ok": false,
+    "trace_batches": false
+  },
+  "outputs": {
+    "defect_report": true,
+    "auto_external_xy_csv": true,
+    "save_predict_input": false
+  }
+}

@@ -11,16 +11,12 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
-IMGS_ROOT="${IMGS_ROOT:-../../48AMA/imgs}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/line_run_$(date +%Y%m%d_%H%M%S)}"
+PRODUCT_CONFIG="${PRODUCT_CONFIG:-configs/products/48AMA.json}"
+RUNTIME_CONFIG="${RUNTIME_CONFIG:-configs/runtime/production.json}"
 
-"$PYTHON_BIN" run_pipeline_line.py "$IMGS_ROOT" \
-  --output-root "$OUTPUT_ROOT" \
-  --batch-size "${BATCH_SIZE:-2}" \
-  --num-workers "${NUM_WORKERS:-8}" \
-  --persistent-workers \
-  --prefetch-factor "${PREFETCH_FACTOR:-2}" \
-  --light-read-workers "${LIGHT_READ_WORKERS:-4}" \
+"$PYTHON_BIN" run_pipeline_line.py \
+  --product-config "$PRODUCT_CONFIG" \
+  --runtime-config "$RUNTIME_CONFIG" \
   "$@"
 
 

@@ -41,6 +41,8 @@ DEFAULT_RESULT_JSON = APP_DIR.parent / "outputs" / "json" / "main_inferer_datalo
 IMAGE_META_CACHE = {}
 INFERENCE_ITEMS_CACHE = {}
 INFERENCE_BASE_CACHE = {}
+INFERENCE_BASE_LOADING = {}
+INFERENCE_SHUFFLE_CACHE = {}
 INFERENCE_CACHE_LOCK = threading.RLock()
 ANNOTATION_WRITE_LOCK = threading.RLock()
 PROJECT_DIR = APP_DIR.parent
@@ -56,6 +58,7 @@ def clear_inference_runtime_cache(clear_disk_cache=False):
     with INFERENCE_CACHE_LOCK:
         INFERENCE_ITEMS_CACHE.clear()
         INFERENCE_BASE_CACHE.clear()
+        INFERENCE_SHUFFLE_CACHE.clear()
 
     removed_disk_files = 0
     if clear_disk_cache and INFERENCE_DISK_CACHE_DIR.exists():
@@ -358,15 +361,8 @@ def restore_model_prediction_index(items):
             MODEL_PREDICTION_BY_PATH[os.path.normcase(path)] = prediction
 
 
-def _load_inference_base_items(result_json_path, project_dir, stamp):
-    """Parse and normalize the result JSON once, independent of UI filters."""
-    result_json_path = resolve_user_supplied_path(result_json_path)
-    base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v3")
-    with INFERENCE_CACHE_LOCK:
-        cached = INFERENCE_BASE_CACHE.get(base_key)
-    if cached is not None:
-        return cached
-
+def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
+    """Build one normalized base list. Call through _load_inference_base_items."""
     # Persist the normalized base list once. Unlike the previous implementation,
     # changing light/search/model filters no longer reparses a 300+ MB JSON file.
     base_cache_id = hashlib.sha256(repr(base_key).encode("utf-8")).hexdigest()
@@ -471,6 +467,68 @@ def _load_inference_base_items(result_json_path, project_dir, stamp):
     except OSError:
         pass
     return items
+
+
+def _load_inference_base_items(result_json_path, project_dir, stamp):
+    """Load one base list while making concurrent requests share the same build."""
+    result_json_path = resolve_user_supplied_path(result_json_path)
+    base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v3")
+    with INFERENCE_CACHE_LOCK:
+        cached = INFERENCE_BASE_CACHE.get(base_key)
+        if cached is not None:
+            return cached
+        loading_event = INFERENCE_BASE_LOADING.get(base_key)
+        if loading_event is None:
+            loading_event = threading.Event()
+            INFERENCE_BASE_LOADING[base_key] = loading_event
+            is_builder = True
+        else:
+            is_builder = False
+
+    if not is_builder:
+        # Startup warm-up and the browser's first request commonly arrive at
+        # the same time. Wait for that one build instead of parsing the large
+        # result JSON twice and competing for memory and disk bandwidth.
+        loading_event.wait()
+        with INFERENCE_CACHE_LOCK:
+            cached = INFERENCE_BASE_CACHE.get(base_key)
+        if cached is not None:
+            return cached
+        return _load_inference_base_items(result_json_path, project_dir, stamp)
+
+    try:
+        return _build_inference_base_items(
+            result_json_path=result_json_path,
+            project_dir=project_dir,
+            stamp=stamp,
+            base_key=base_key,
+        )
+    finally:
+        with INFERENCE_CACHE_LOCK:
+            INFERENCE_BASE_LOADING.pop(base_key, None)
+            loading_event.set()
+
+
+def get_shuffled_items_cached(items, shuffle_seed):
+    cache_key = (id(items), str(shuffle_seed))
+    with INFERENCE_CACHE_LOCK:
+        cached = INFERENCE_SHUFFLE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    shuffled = sorted(
+        items,
+        key=lambda item: hashlib.sha256(
+            f"{shuffle_seed}|{item.get('originalPath', '')}".encode("utf-8")
+        ).digest(),
+    )
+    with INFERENCE_CACHE_LOCK:
+        # Keep this bounded because ad-hoc shuffle seeds can otherwise retain
+        # old item lists indefinitely in a long-running review server.
+        if len(INFERENCE_SHUFFLE_CACHE) >= 32:
+            INFERENCE_SHUFFLE_CACHE.pop(next(iter(INFERENCE_SHUFFLE_CACHE)))
+        INFERENCE_SHUFFLE_CACHE[cache_key] = shuffled
+    return shuffled
 
 
 def load_inference_items(result_json_path, light_type, model_prediction_filter, keyword, image_search, project_dir=None):
@@ -1197,7 +1255,7 @@ class InspectionHandler(BaseHTTPRequestHandler):
         keyword = query.get("keyword", [""])[0]
         page = max(1, int(float(query.get("page", ["1"])[0] or 1)))
         num_col = max(1, int(float(query.get("num_col", ["2"])[0] or 2)))
-        num_row = max(1, int(float(query.get("num_row", ["30"])[0] or 30)))
+        num_row = max(1, int(float(query.get("num_row", ["10"])[0] or 10)))
         shuffle_enabled = query.get("shuffle", ["true"])[0].lower() in ("1", "true", "yes", "on")
         shuffle_seed = query.get("shuffle_seed", ["default"])[0]
         json_first = query.get("json_first", ["true"])[0].lower() in ("1", "true", "yes", "on")
@@ -1303,12 +1361,16 @@ class InspectionHandler(BaseHTTPRequestHandler):
             filtered_items.append(item)
 
         if shuffle_enabled:
-            filtered_items = sorted(
-                filtered_items,
-                key=lambda item: hashlib.sha256(f"{shuffle_seed}|{item.get('originalPath', '')}".encode("utf-8")).hexdigest(),
-            )
+            # Cache the expensive full-list SHA ordering. Annotation/confusion
+            # filtering is then applied while preserving this stable order.
+            shuffled_items = get_shuffled_items_cached(items_all, shuffle_seed)
+            selected_ids = {id(item) for item in filtered_items}
+            filtered_items = [item for item in shuffled_items if id(item) in selected_ids]
         if json_first:
-            filtered_items = sorted(filtered_items, key=lambda item: 0 if item.get("_hasAnnotation") else 1)
+            filtered_items = (
+                [item for item in filtered_items if item.get("_hasAnnotation")]
+                + [item for item in filtered_items if not item.get("_hasAnnotation")]
+            )
 
         total_pages = max(1, (len(filtered_items) + per_page - 1) // per_page)
         page = min(page, total_pages)

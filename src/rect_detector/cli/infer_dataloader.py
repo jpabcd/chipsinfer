@@ -79,6 +79,17 @@ def main(
     )
     parser.add_argument("--x-scale", type=float, default=0.30)
     parser.add_argument("--y-scale", type=float, default=0.50)
+    parser.add_argument("--threshold", type=int, default=18)
+    parser.add_argument("--x-dilate", type=int, default=45)
+    parser.add_argument("--y-dilate", type=int, default=14)
+    parser.add_argument("--min-width", type=int, default=600)
+    parser.add_argument("--max-width", type=int, default=950)
+    parser.add_argument("--min-height", type=int, default=90)
+    parser.add_argument("--max-height", type=int, default=220)
+    parser.add_argument("--min-aspect", type=float, default=3.6)
+    parser.add_argument("--max-aspect", type=float, default=8.5)
+    parser.add_argument("--min-area", type=int, default=2500)
+    parser.add_argument("--margin", type=int, default=100)
     parser.add_argument("--mech-delta-x", type=float, default=1421.0)
     parser.add_argument("--mech-delta-y", type=float, default=283.0)
     parser.add_argument(
@@ -98,6 +109,8 @@ def main(
         action="store_true",
         help="Require rect and mechanical counts to match; default allows partial alignment.",
     )
+    parser.add_argument("--allow-x-reverse", action="store_true")
+    parser.add_argument("--allow-y-reverse", action="store_true")
     parser.add_argument(
         "--trace-batches",
         action="store_true",
@@ -149,6 +162,17 @@ def main(
         rect_inferer = RectInferer(
             x_scale=args.x_scale,
             y_scale=args.y_scale,
+            threshold=args.threshold,
+            x_dilate=args.x_dilate,
+            y_dilate=args.y_dilate,
+            min_width=args.min_width,
+            max_width=args.max_width,
+            min_height=args.min_height,
+            max_height=args.max_height,
+            min_aspect=args.min_aspect,
+            max_aspect=args.max_aspect,
+            min_area=args.min_area,
+            margin=args.margin,
             mech_delta_x=args.mech_delta_x,
             mech_delta_y=args.mech_delta_y,
             delta_x_pixel=args.delta_x_pixel,
@@ -159,11 +183,15 @@ def main(
             rect_inferer=rect_inferer,
             yolo_inferers=combined_yolo_inferers,
             allow_partial=not args.strict_align,
+            allow_x_reverse=args.allow_x_reverse,
+            allow_y_reverse=args.allow_y_reverse,
         )
 
     # The shared inferer retains model weights, while these settings are specific
     # to the product currently being processed.
     inferer.allow_partial = not args.strict_align
+    inferer.allow_x_reverse = args.allow_x_reverse
+    inferer.allow_y_reverse = args.allow_y_reverse
     inferer.yolo_inferers.set_trace_batching(args.trace_batches)
     inferer.yolo_inferers.set_predict_input_dir(args.predict_input_root)
     inferer.yolo_inferers.set_save_predict_input(args.save_predict_input)
@@ -277,10 +305,23 @@ def main(
             "max_batches": args.max_batches,
             "max_samples": args.max_samples,
             "strict_align": args.strict_align,
+            "allow_x_reverse": args.allow_x_reverse,
+            "allow_y_reverse": args.allow_y_reverse,
             "trace_batches": args.trace_batches,
             "save_predict_input": args.save_predict_input,
             "x_scale": args.x_scale,
             "y_scale": args.y_scale,
+            "threshold": args.threshold,
+            "x_dilate": args.x_dilate,
+            "y_dilate": args.y_dilate,
+            "min_width": args.min_width,
+            "max_width": args.max_width,
+            "min_height": args.min_height,
+            "max_height": args.max_height,
+            "min_aspect": args.min_aspect,
+            "max_aspect": args.max_aspect,
+            "min_area": args.min_area,
+            "margin": args.margin,
             "mech_delta_x": args.mech_delta_x,
             "mech_delta_y": args.mech_delta_y,
             "delta_x_pixel": args.delta_x_pixel,

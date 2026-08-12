@@ -31,6 +31,19 @@ It visualizes the final pipeline JSON output and supports manual review.
 
 ## 48AMA Production-Line Inference
 
+The line runner separates configuration into two files:
+
+- `configs/products/48AMA.json`: product geometry, rectangle detection, alignment, YOLO model config, and wafer-map geometry.
+- `configs/runtime/production.json`: input/output roots, line scanning behavior, DataLoader performance settings, and output switches.
+
+For production line B, copy both examples, change the product-related values in the product profile and the machine/path values in the runtime profile, then run:
+
+```bash
+./run_pipeline_line.sh --product-config configs/products/LINE_B_PRODUCT.json --runtime-config configs/runtime/line_b.json
+```
+
+Relative paths in both profiles are resolved from the project root. Explicit command-line arguments override JSON values.
+
 Process every completed product directory under `../../48AMA/imgs` in directory modification-time order:
 
 ```bash

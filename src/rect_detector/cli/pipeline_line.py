@@ -7,7 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from rect_detector.cli.pipeline_product import run_product
+from .config_profiles import (  # pyright: ignore[reportMissingImports]
+    load_json_config,
+    product_config_args,
+    runtime_defaults,
+    runtime_inference_args,
+)
+from .pipeline_product import run_product
 from rect_detector.main_inferer import MainInferer
 
 
@@ -117,6 +123,30 @@ def _build_product_args(
 
 
 def _parse_args(argv: list[str] | None) -> tuple[argparse.Namespace, list[str]]:
+    project_root = _project_root()
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument(
+        "--product-config",
+        type=Path,
+        default=Path("configs/products/48AMA.json"),
+    )
+    config_parser.add_argument(
+        "--runtime-config",
+        type=Path,
+        default=Path("configs/runtime/production.json"),
+    )
+    config_args, _ = config_parser.parse_known_args(argv)
+    product_config_path, product_config = load_json_config(
+        config_args.product_config, project_root, "product config"
+    )
+    runtime_config_path, runtime_config = load_json_config(
+        config_args.runtime_config, project_root, "runtime config"
+    )
+    defaults = runtime_defaults(runtime_config)
+    default_output_root = defaults["output_root"] or str(
+        Path("outputs") / f"line_run_{datetime.now():%Y%m%d_%H%M%S}"
+    )
+
     parser = argparse.ArgumentParser(
         description=(
             "Run the product pipeline for all completed product folders under a production-line imgs directory. "
@@ -127,69 +157,89 @@ def _parse_args(argv: list[str] | None) -> tuple[argparse.Namespace, list[str]]:
         "imgs_root",
         nargs="?",
         type=Path,
-        default=Path("../../48AMA/imgs"),
+        default=Path(defaults["imgs_root"]),
         help="Production-line image root containing one directory per product.",
     )
+    parser.add_argument("--product-config", type=Path, default=product_config_path)
+    parser.add_argument("--runtime-config", type=Path, default=runtime_config_path)
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("outputs") / f"line_run_{datetime.now():%Y%m%d_%H%M%S}",
+        default=Path(default_output_root),
         help="Root for this line run; each product receives an isolated subdirectory.",
     )
     parser.add_argument(
         "--summary-json",
         type=Path,
-        default=None,
+        default=Path(defaults["summary_json"]) if defaults["summary_json"] else None,
         help="Line-run summary JSON path. Defaults to OUTPUT_ROOT/line_summary.json.",
     )
-    parser.add_argument("--order-by", choices=("mtime", "name"), default="mtime")
-    parser.add_argument("--reverse", action="store_true", help="Process newest product first.")
-    parser.add_argument("--max-products", type=int, default=0, help="Process at most N products (0 means all).")
+    parser.add_argument("--order-by", choices=("mtime", "name"), default=defaults["order_by"])
+    parser.add_argument(
+        "--reverse", action=argparse.BooleanOptionalAction,
+        default=defaults["reverse"], help="Process newest product first."
+    )
+    parser.add_argument(
+        "--max-products", type=int, default=defaults["max_products"],
+        help="Process at most N products (0 means all)."
+    )
     parser.add_argument(
         "--skip-incomplete",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=defaults["skip_incomplete"],
         help="Skip folders that are still being written by the production line.",
     )
     parser.add_argument(
         "--skip-completed",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=defaults["skip_completed"],
         help="Skip products with an existing per-product result JSON in OUTPUT_ROOT.",
     )
-    parser.add_argument("--fail-fast", action="store_true", help="Stop at the first failed product.")
+    parser.add_argument(
+        "--fail-fast", action=argparse.BooleanOptionalAction,
+        default=defaults["fail_fast"], help="Stop at the first failed product."
+    )
     parser.add_argument(
         "--watch",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["watch"],
         help="Continuously rescan for newly completed product folders.",
     )
     parser.add_argument(
         "--rescan-interval",
         type=float,
-        default=30.0,
+        default=defaults["rescan_interval"],
         help="Seconds between scans in --watch mode. Default: 30.",
     )
-    parser.add_argument("--dry-run", action="store_true", help="List selected products without running inference.")
+    parser.add_argument(
+        "--dry-run", action=argparse.BooleanOptionalAction,
+        default=defaults["dry_run"], help="List selected products without running inference."
+    )
     parser.add_argument(
         "--defect-report",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=defaults["defect_report"],
         help="Write one defect-report CSV per product. Default: enabled.",
     )
     parser.add_argument(
         "--auto-external-xy-csv",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=defaults["auto_external_xy_csv"],
         help="Use PRODUCT_DIR/PRODUCT_NAME.csv when present and generate its wafer map. Default: enabled.",
     )
     parser.add_argument(
         "--save-predict-input",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=defaults["save_predict_input"],
         help="Save model input crops for every product. Default: disabled.",
     )
-    args, forwarded_args = parser.parse_known_args(argv)
+    args, cli_forwarded_args = parser.parse_known_args(argv)
 
+    forwarded_args = [
+        *runtime_inference_args(runtime_config),
+        *product_config_args(product_config, project_root),
+        *cli_forwarded_args,
+    ]
     forwarded_args.append(
         "--save-predict-input" if args.save_predict_input else "--no-save-predict-input"
     )
@@ -219,6 +269,8 @@ def main(argv: list[str] | None = None) -> None:
     summary: dict[str, Any] = {
         "imgs_root": str(imgs_root),
         "output_root": str(output_root),
+        "product_config": str(args.product_config),
+        "runtime_config": str(args.runtime_config),
         "order_by": args.order_by,
         "reverse": args.reverse,
         "started_at": datetime.now().isoformat(timespec="seconds"),
