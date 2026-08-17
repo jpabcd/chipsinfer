@@ -7,7 +7,8 @@
         "中间线":{
           "enabled": false
         },
-        "可忽略-曝点":{"area": {">": 500}}
+        "可忽略-曝点":{"enabled": false}
+
       },
         "crop_width": 795,
         "crop_height": 161,
@@ -27,7 +28,8 @@
       "name": "light_2",
       "weight": "./my_weights/20260807-200159-fb52508b-light2/output/train/weights/best.pt",
       "analyse": {
-        "可忽略-曝点":{"area": {">": 500}}
+        "可忽略-曝点":{"enabled": false},
+        "可忽略-线条":{"enabled": false}
       },
         "crop_width": 795,
         "crop_height": 161,

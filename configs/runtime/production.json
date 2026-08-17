@@ -18,7 +18,7 @@
   "inference": {
     "batch_size": 2,
     "num_workers": 8,
-    "persistent_workers": true,
+    "persistent_workers": false,
     "prefetch_factor": 2,
     "light_read_workers": 4,
     "max_batches": 0,
