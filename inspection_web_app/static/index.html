@@ -80,11 +80,11 @@
       </label>
       <label>
         列数
-        <input id="numCol" type="number" value="2" min="1" max="10">
+        <input id="numCol" type="number" value="4" min="1" max="12" title="列数过大时会导致浏览器卡顿，已限制为安全范围">
       </label>
       <label>
         行数
-        <input id="numRow" type="number" value="10" min="1" max="200">
+        <input id="numRow" type="number" value="10" min="1" max="12">
       </label>
       <label>
         缩放
@@ -106,6 +106,32 @@
     </section>
 
     <section class="status" id="status">等待加载数据。</section>
+
+    <section class="wafer-map-panel" aria-label="电极 map 定位">
+      <div class="wafer-map-header">
+        <h2>电极 map 定位</h2>
+        <div class="wafer-map-header-actions">
+          <label class="wafer-map-filter">
+            最终结果
+            <select id="waferFinalStatus" aria-label="筛选最终结果">
+              <option value="All">全部</option>
+              <option value="NG">NG</option>
+              <option value="OK">OK</option>
+            </select>
+          </label>
+          <button id="clearChipFilter" type="button" class="wafer-map-clear" disabled>清除 chip 定位</button>
+          <span id="waferMapStatus">等待加载结果 JSON。</span>
+          <button id="waferMapToggle" type="button" class="wafer-map-toggle" aria-expanded="true">收起</button>
+        </div>
+      </div>
+      <div class="wafer-map-content">
+        <div class="wafer-map-view">
+          <img id="waferMapImage" alt="Wafer map" draggable="false">
+          <canvas id="waferMapCanvas" aria-label="Wafer map overlay"></canvas>
+        </div>
+      </div>
+    </section>
+
     <div class="workspace-layout">
       <div class="gallery-column">
         <section id="gallery" class="gallery" aria-label="检测图片列表"></section>
@@ -194,6 +220,15 @@
     </div>
   </main>
 
+  <div id="imageZoomModal" class="image-zoom-modal hidden" aria-label="图片放大查看" role="dialog">
+    <div class="image-zoom-backdrop" data-close-zoom></div>
+    <div class="image-zoom-dialog">
+      <button type="button" class="image-zoom-close" data-close-zoom aria-label="关闭放大图">×</button>
+      <img id="imageZoomImg" alt="放大查看图片">
+      <div id="imageZoomMeta" class="image-zoom-meta"></div>
+    </div>
+  </div>
+
   <template id="cardTemplate">
     <article class="image-card">
       <div class="image-head">
@@ -205,6 +240,10 @@
         <canvas></canvas>
       </div>
       <div class="review-panel">
+        <div class="image-quality-row">
+          <span class="image-quality-state">缩略图</span>
+          <button type="button" class="load-original-btn">加载原图</button>
+        </div>
         <div class="model-prediction">模型判定为：<strong data-model-prediction></strong></div>
         <div class="review-title">对分类结果做人工打标</div>
         <div class="segmented" role="group" aria-label="对分类结果做人工打标">

@@ -1,4 +1,5 @@
 import argparse
+import csv
 import glob
 import hashlib
 import json
@@ -45,12 +46,16 @@ INFERENCE_ITEMS_CACHE = {}
 INFERENCE_BASE_CACHE = {}
 INFERENCE_BASE_LOADING = {}
 INFERENCE_SHUFFLE_CACHE = {}
+WAFER_MAP_CACHE = {}
 INFERENCE_CACHE_LOCK = threading.RLock()
 ANNOTATION_WRITE_LOCK = threading.RLock()
 PROJECT_DIR = APP_DIR.parent
 CONFIGURED_RESULT_JSON = ""
 JSON_OPTIONS_TXT = APP_DIR / "json_candidates.txt"
 INFERENCE_DISK_CACHE_DIR = APP_DIR / ".inference_cache"
+THUMBNAIL_CACHE_DIR = APP_DIR / ".thumbnail_cache"
+THUMBNAIL_CACHE_LOCK = threading.RLock()
+DEFAULT_THUMBNAIL_MAX_SIDE = 640
 MODEL_PREDICTION_BY_PATH = {}
 
 
@@ -61,6 +66,7 @@ def clear_inference_runtime_cache(clear_disk_cache=False):
         INFERENCE_ITEMS_CACHE.clear()
         INFERENCE_BASE_CACHE.clear()
         INFERENCE_SHUFFLE_CACHE.clear()
+        WAFER_MAP_CACHE.clear()
 
     removed_disk_files = 0
     if clear_disk_cache and INFERENCE_DISK_CACHE_DIR.exists():
@@ -448,12 +454,19 @@ def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
                 original_path = str(image_path.resolve())
                 MODEL_PREDICTION_BY_PATH[original_path] = current_light_prediction
                 MODEL_PREDICTION_BY_PATH[os.path.normcase(original_path)] = current_light_prediction
+                try:
+                    map_mx = int(float(mechanical.get("MX")))
+                    map_my = int(float(mechanical.get("MY")))
+                except (TypeError, ValueError):
+                    map_mx = None
+                    map_my = None
                 items.append({
                     "id": quote(original_path, safe=""),
                     "name": image_path.name,
                     "originalPath": original_path,
                     "displayPath": original_path,
                     "imageUrl": "/api/image?path=" + quote(original_path, safe=""),
+                    "thumbnailUrl": "/api/thumbnail?path=" + quote(original_path, safe=""),
                     "width": 0,
                     "height": 0,
                     "modelPrediction": current_light_prediction,
@@ -464,6 +477,9 @@ def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
                     "sampleId": sample.get("sample_id", ""),
                     "numStr": sample.get("num_str", ""),
                     "chipKey": chip_key,
+                    "mapMx": map_mx,
+                    "mapMy": map_my,
+                    "finalStatus": str((chip.get("final") or {}).get("status", "UNKNOWN")).upper(),
                     "predictionOverlay": {"detection": [], "analyse": []},
                     "_searchText": searchable,
                     "_rawOutput": compact_raw_output(raw),
@@ -491,7 +507,7 @@ def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
 def _load_inference_base_items(result_json_path, project_dir, stamp):
     """Load one base list while making concurrent requests share the same build."""
     result_json_path = resolve_user_supplied_path(result_json_path)
-    base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v3")
+    base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v5")
     with INFERENCE_CACHE_LOCK:
         cached = INFERENCE_BASE_CACHE.get(base_key)
         if cached is not None:
@@ -559,7 +575,7 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
         stamp = None
 
     cache_key = (
-        "filtered-v2",
+        "filtered-v4",
         str(result_json_path),
         stamp,
         light_type,
@@ -589,7 +605,7 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
                 and not keyword
                 and not image_search
             ):
-                base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v3")
+                base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v5")
                 with INFERENCE_CACHE_LOCK:
                     INFERENCE_BASE_CACHE[base_key] = cached
             return cached
@@ -1188,6 +1204,34 @@ def json_bytes(payload):
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
+def _read_wafer_map_coordinates(csv_path):
+    coordinates = {}
+    if not csv_path or not csv_path.is_file():
+        return coordinates
+    try:
+        with csv_path.open("r", encoding="utf-8", newline="") as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                try:
+                    mx_value = row.get("MX", "")
+                    my_value = row.get("MY", "")
+                    x_value = row.get("X", "")
+                    y_value = row.get("Y", "")
+                    if mx_value is None or my_value is None:
+                        continue
+                    mx = int(float(mx_value))
+                    my = int(float(my_value))
+                    x = float(x_value) if x_value not in (None, "") else None
+                    y = float(y_value) if y_value not in (None, "") else None
+                    if x is not None and y is not None:
+                        coordinates[(mx, my)] = {"x": x, "y": y}
+                except (TypeError, ValueError):
+                    continue
+    except (OSError, UnicodeDecodeError):
+        return {}
+    return coordinates
+
+
 class InspectionHandler(BaseHTTPRequestHandler):
     server_version = "InspectionWeb/1.0"
 
@@ -1202,6 +1246,10 @@ class InspectionHandler(BaseHTTPRequestHandler):
             self.handle_images(parse_qs(parsed.query))
         elif parsed.path == "/api/image":
             self.handle_image(parse_qs(parsed.query))
+        elif parsed.path == "/api/thumbnail":
+            self.handle_thumbnail(parse_qs(parsed.query))
+        elif parsed.path == "/api/wafer-map":
+            self.handle_wafer_map(parse_qs(parsed.query))
         elif parsed.path == "/api/annotations":
             self.handle_annotations_export(parse_qs(parsed.query))
         elif parsed.path == "/api/export-image-paths":
@@ -1266,6 +1314,86 @@ class InspectionHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def handle_wafer_map(self, query):
+        result_json = query.get("result_json", [""])[0].strip() or CONFIGURED_RESULT_JSON
+        if not result_json:
+            self.send_json({"error": "请先指定推理结果 JSON。"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        try:
+            result_json_path = resolve_user_supplied_path(result_json)
+            if not result_json_path.is_file():
+                raise FileNotFoundError(result_json_path)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": f"读取 wafer map 数据失败：{error}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        product_dir = result_json_path.parent.parent
+        csv_path = (product_dir / "csv" / f"{result_json_path.stem}.csv").resolve()
+        try:
+            cache_key = (
+                str(result_json_path),
+                result_json_path.stat().st_mtime_ns,
+                result_json_path.stat().st_size,
+                csv_path.stat().st_mtime_ns if csv_path.is_file() else None,
+            )
+        except OSError as error:
+            self.send_json({"error": f"读取 wafer map 数据失败：{error}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        with INFERENCE_CACHE_LOCK:
+            cached_payload = WAFER_MAP_CACHE.get(cache_key)
+        if cached_payload is not None:
+            self.send_json(cached_payload)
+            return
+
+        try:
+            if orjson is not None:
+                payload = orjson.loads(result_json_path.read_bytes())
+            else:
+                with result_json_path.open("r", encoding="utf-8") as file:
+                    payload = json.load(file)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            self.send_json({"error": f"读取 wafer map 数据失败：{error}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        coordinate_index = _read_wafer_map_coordinates(csv_path)
+
+        chip_records = []
+        for sample in payload.get("samples", []):
+            for chip in sample.get("chips", []):
+                mechanical = chip.get("mechanical_columns") or {}
+                mx = mechanical.get("MX")
+                my = mechanical.get("MY")
+                if mx is None or my is None:
+                    continue
+                try:
+                    mx_int = int(float(mx))
+                    my_int = int(float(my))
+                except (TypeError, ValueError):
+                    continue
+
+                coord = coordinate_index.get((mx_int, my_int), {})
+                x_value = coord.get("x")
+                y_value = coord.get("y")
+                chip_records.append({
+                    "mx": mx_int,
+                    "my": my_int,
+                    "x": x_value,
+                    "y": y_value,
+                    "status": str((chip.get("final") or {}).get("status", "UNKNOWN")).upper(),
+                })
+
+        response_payload = {
+            "productName": result_json_path.stem,
+            "chipCount": len(chip_records),
+            "chips": chip_records,
+        }
+        with INFERENCE_CACHE_LOCK:
+            WAFER_MAP_CACHE.clear()
+            WAFER_MAP_CACHE[cache_key] = response_payload
+        self.send_json(response_payload)
+
     def handle_images(self, query):
         result_json = query.get("result_json", [""])[0].strip() or CONFIGURED_RESULT_JSON
         project_dir = query.get("project_dir", [""])[0].strip() or str(PROJECT_DIR)
@@ -1273,16 +1401,34 @@ class InspectionHandler(BaseHTTPRequestHandler):
         light_type = query.get("light_type", ["All"])[0] or "All"
         keyword = query.get("keyword", [""])[0]
         page = max(1, int(float(query.get("page", ["1"])[0] or 1)))
-        num_col = max(1, int(float(query.get("num_col", ["2"])[0] or 2)))
-        num_row = max(1, int(float(query.get("num_row", ["10"])[0] or 10)))
+        # Keep page size bounded to avoid generating/painting tens of thousands of
+        # cards in a single response, which makes the browser unresponsive.
+        num_col = min(12, max(1, int(float(query.get("num_col", ["2"])[0] or 2))))
+        num_row = min(12, max(1, int(float(query.get("num_row", ["10"])[0] or 10))))
         shuffle_enabled = query.get("shuffle", ["true"])[0].lower() in ("1", "true", "yes", "on")
         shuffle_seed = query.get("shuffle_seed", ["default"])[0]
         json_first = query.get("json_first", ["true"])[0].lower() in ("1", "true", "yes", "on")
         clear_cache = query.get("clear_cache", ["false"])[0].lower() in ("1", "true", "yes", "on")
         image_search = query.get("image_search", [""])[0]
         model_prediction_filter = query.get("model_prediction", ["All"])[0] or "All"
+        final_status = (query.get("final_status", ["All"])[0] or "All").upper()
+        chip_mx_text = query.get("chip_mx", [""])[0].strip()
+        chip_my_text = query.get("chip_my", [""])[0].strip()
         confusion_cell = query.get("confusion_cell", [""])[0].upper()
         confusion_light = query.get("confusion_light", [""])[0]
+
+        if final_status not in ("ALL", "OK", "NG"):
+            self.send_json({"error": "最终结果筛选仅支持 All、OK 或 NG。"}, HTTPStatus.BAD_REQUEST)
+            return
+        if bool(chip_mx_text) != bool(chip_my_text):
+            self.send_json({"error": "chip 定位必须同时提供 MX 和 MY。"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            chip_mx = int(float(chip_mx_text)) if chip_mx_text else None
+            chip_my = int(float(chip_my_text)) if chip_my_text else None
+        except ValueError:
+            self.send_json({"error": "chip 定位坐标无效。"}, HTTPStatus.BAD_REQUEST)
+            return
 
         per_page = num_col * num_row
         cache_cleared = False
@@ -1310,6 +1456,16 @@ class InspectionHandler(BaseHTTPRequestHandler):
                     image_search,
                     project_dir,
                 )
+                if final_status != "ALL":
+                    items_all = [
+                        item for item in items_all
+                        if item.get("finalStatus") == final_status
+                    ]
+                if chip_mx is not None:
+                    items_all = [
+                        item for item in items_all
+                        if item.get("mapMx") == chip_mx and item.get("mapMy") == chip_my
+                    ]
                 source = str(resolve_user_supplied_path(result_json))
             else:
                 if not base_dir:
@@ -1344,6 +1500,7 @@ class InspectionHandler(BaseHTTPRequestHandler):
                         "originalPath": original_path,
                         "displayPath": display_path,
                         "imageUrl": "/api/image?path=" + quote(display_path, safe=""),
+                        "thumbnailUrl": "/api/thumbnail?path=" + quote(display_path, safe=""),
                         # Dimensions are decoded with OpenCV only after this
                         # item enters the requested page.
                         "width": 0,
@@ -1431,11 +1588,86 @@ class InspectionHandler(BaseHTTPRequestHandler):
             "jsonFirst": json_first,
             "imageSearch": image_search,
             "modelPredictionFilter": model_prediction_filter,
+            "finalStatus": final_status,
+            "chipMx": chip_mx,
+            "chipMy": chip_my,
             "confusionCell": confusion_cell,
             "confusionLight": confusion_light,
             "cacheCleared": cache_cleared,
             "cacheFilesRemoved": removed_disk_files,
         })
+
+    def handle_thumbnail(self, query):
+        raw_path = query.get("path", [""])[0]
+        image_path = Path(os.path.abspath(os.path.expanduser(unquote(raw_path))))
+        if not image_path.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND, "Image not found")
+            return
+        if image_path.suffix.lower() not in IMAGE_EXTENSIONS:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Unsupported image type")
+            return
+
+        try:
+            max_side = int(query.get("max_side", [str(DEFAULT_THUMBNAIL_MAX_SIDE)])[0])
+            max_side = min(1600, max(160, max_side))
+            stat = image_path.stat()
+        except (OSError, TypeError, ValueError):
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid thumbnail request")
+            return
+
+        cache_key = hashlib.sha256(
+            f"{image_path}|{stat.st_mtime_ns}|{stat.st_size}|{max_side}".encode("utf-8")
+        ).hexdigest()
+        cache_path = THUMBNAIL_CACHE_DIR / f"{cache_key}.jpg"
+
+        try:
+            with THUMBNAIL_CACHE_LOCK:
+                if not cache_path.is_file():
+                    source = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
+                    if source is None:
+                        raise OSError("unable to decode image")
+                    source_height, source_width = source.shape[:2]
+                    scale = min(1.0, max_side / max(source_width, source_height))
+                    if scale < 1.0:
+                        resized = cv2.resize(
+                            source,
+                            (max(1, round(source_width * scale)), max(1, round(source_height * scale))),
+                            interpolation=cv2.INTER_AREA,
+                        )
+                    else:
+                        resized = source
+                    if resized.ndim == 2:
+                        preview = resized
+                    elif resized.shape[2] == 4:
+                        preview = cv2.cvtColor(resized, cv2.COLOR_BGRA2BGR)
+                    else:
+                        preview = resized
+                    if preview.dtype != np.uint8:
+                        preview = cv2.normalize(preview, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                    success, encoded = cv2.imencode(".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 82])
+                    if not success:
+                        raise OSError("unable to encode thumbnail")
+                    THUMBNAIL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                    temp_path = cache_path.with_suffix(".tmp")
+                    temp_path.write_bytes(encoded.tobytes())
+                    temp_path.replace(cache_path)
+            content_length = cache_path.stat().st_size
+            image_file = cache_path.open("rb")
+        except OSError:
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Unable to generate thumbnail")
+            return
+
+        try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.send_header("Content-Length", str(content_length))
+            self.end_headers()
+            shutil.copyfileobj(image_file, self.wfile, length=256 * 1024)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            image_file.close()
 
     def handle_image(self, query):
         raw_path = query.get("path", [""])[0]
@@ -1687,8 +1919,24 @@ class InspectionHandler(BaseHTTPRequestHandler):
         keyword = query.get("keyword", [""])[0]
         image_search = query.get("image_search", [""])[0]
         model_prediction_filter = query.get("model_prediction", ["All"])[0] or "All"
+        final_status = (query.get("final_status", ["All"])[0] or "All").upper()
+        chip_mx_text = query.get("chip_mx", [""])[0].strip()
+        chip_my_text = query.get("chip_my", [""])[0].strip()
         confusion_cell = query.get("confusion_cell", [""])[0].upper()
         confusion_light = query.get("confusion_light", [""])[0]
+
+        if final_status not in ("ALL", "OK", "NG"):
+            self.send_json({"error": "最终结果筛选仅支持 All、OK 或 NG。"}, HTTPStatus.BAD_REQUEST)
+            return
+        if bool(chip_mx_text) != bool(chip_my_text):
+            self.send_json({"error": "chip 定位必须同时提供 MX 和 MY。"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            chip_mx = int(float(chip_mx_text)) if chip_mx_text else None
+            chip_my = int(float(chip_my_text)) if chip_my_text else None
+        except ValueError:
+            self.send_json({"error": "chip 定位坐标无效。"}, HTTPStatus.BAD_REQUEST)
+            return
 
         annotations = load_annotations()
         annotation_index = build_annotation_index(annotations)
@@ -1705,6 +1953,13 @@ class InspectionHandler(BaseHTTPRequestHandler):
                     image_search,
                     project_dir,
                 )
+                if final_status != "ALL":
+                    items = [item for item in items if item.get("finalStatus") == final_status]
+                if chip_mx is not None:
+                    items = [
+                        item for item in items
+                        if item.get("mapMx") == chip_mx and item.get("mapMy") == chip_my
+                    ]
                 paths = [item.get("originalPath", "") for item in items if item.get("originalPath")]
                 if not source_root:
                     source_root = project_dir or str(result_json_path.parent)

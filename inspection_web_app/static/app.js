@@ -39,6 +39,18 @@ const STORAGE_KEYS = {
 
 const gallery = document.querySelector("#gallery");
 const statusBox = document.querySelector("#status");
+const imageZoomModal = document.querySelector("#imageZoomModal");
+const imageZoomImg = document.querySelector("#imageZoomImg");
+const imageZoomMeta = document.querySelector("#imageZoomMeta");
+const waferMapEls = {
+  image: document.querySelector("#waferMapImage"),
+  canvas: document.querySelector("#waferMapCanvas"),
+  status: document.querySelector("#waferMapStatus"),
+  toggle: document.querySelector("#waferMapToggle"),
+  finalStatus: document.querySelector("#waferFinalStatus"),
+  clearChipFilter: document.querySelector("#clearChipFilter"),
+  panel: document.querySelector(".wafer-map-panel"),
+};
 const template = document.querySelector("#cardTemplate");
 const statsEls = {
   meta: document.querySelector("#statsMeta"),
@@ -54,6 +66,17 @@ const statsEls = {
   refresh: document.querySelector("#refreshStats"),
 };
 let shuffleSeed = String(Date.now());
+let waferMapState = {
+  chips: [],
+  selectedIndex: null,
+  visibleIndices: [],
+  sourceKey: "",
+  collapsed: false,
+};
+let chipFilter = {
+  mx: "",
+  my: "",
+};
 let pageState = {
   page: 1,
   totalPages: 1,
@@ -408,7 +431,18 @@ function toPixelInferenceRegion(region, item) {
   };
 }
 
+function clampGalleryPageSize(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(12, Math.max(1, parsed));
+}
+
 function getParams() {
+  const safeNumCol = clampGalleryPageSize(controls.numCol.value, 4);
+  const safeNumRow = clampGalleryPageSize(controls.numRow.value, 10);
+  controls.numCol.value = String(safeNumCol);
+  controls.numRow.value = String(safeNumRow);
+
   return new URLSearchParams({
     result_json: controls.resultJson?.value.trim() || "",
     project_dir: controls.projectDir?.value.trim() || "",
@@ -417,14 +451,17 @@ function getParams() {
     model_prediction: controls.modelPredictionFilter.value,
     keyword: controls.keyword.value.trim(),
     image_search: controls.imageSearch.value.trim(),
-    num_col: controls.numCol.value,
-    num_row: controls.numRow.value,
+    num_col: String(safeNumCol),
+    num_row: String(safeNumRow),
     scale_ratio: controls.scaleRatio.value,
     shuffle: controls.shuffleImages.checked ? "true" : "false",
     shuffle_seed: shuffleSeed,
     json_first: controls.jsonFirst.checked ? "true" : "false",
     confusion_cell: confusionFilter.cell,
     confusion_light: confusionFilter.light,
+    final_status: waferMapEls.finalStatus?.value || "All",
+    chip_mx: chipFilter.mx,
+    chip_my: chipFilter.my,
     page: controls.page.value || "1",
   });
 }
@@ -644,6 +681,301 @@ function restoreJsonPreference() {
   }
 }
 
+function hasChipFilter() {
+  return chipFilter.mx !== "" && chipFilter.my !== "";
+}
+
+function updateChipFilterUi() {
+  if (!waferMapEls.clearChipFilter) return;
+  waferMapEls.clearChipFilter.disabled = !hasChipFilter();
+  waferMapEls.clearChipFilter.textContent = hasChipFilter()
+    ? `清除 chip 定位 (${chipFilter.mx}, ${chipFilter.my})`
+    : "清除 chip 定位";
+}
+
+function drawWaferMapPoints() {
+  if (!waferMapEls.canvas) return;
+  const canvas = waferMapEls.canvas;
+  const parent = canvas.parentElement;
+  if (!parent) return;
+
+  const rect = parent.getBoundingClientRect();
+  const width = Math.max(280, Math.floor(rect.width || parent.clientWidth || 640));
+  const height = Math.max(280, Math.floor(rect.height || parent.clientHeight || 640));
+  const ratio = window.devicePixelRatio || 1;
+
+  canvas.width = Math.max(1, Math.floor(width * ratio));
+  canvas.height = Math.max(1, Math.floor(height * ratio));
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const chips = waferMapState.chips || [];
+  const finalStatus = (waferMapEls.finalStatus?.value || "All").toUpperCase();
+  const visibleIndices = [];
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const radius = Math.min(width, height) * 0.42;
+
+  ctx.fillStyle = "#f8fafc";
+  ctx.fillRect(0, 0, width, height);
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = "#dfe5ee";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  if (!chips.length) {
+    ctx.fillStyle = "#667085";
+    ctx.font = "16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("等待加载 chip 坐标…", centerX, centerY);
+    return;
+  }
+
+  const validChips = chips.filter((chip) => (
+    Number.isFinite(chip.x)
+    && Number.isFinite(chip.y)
+    && (finalStatus === "ALL" || String(chip.status || "").toUpperCase() === finalStatus)
+  ));
+  const validX = validChips.map((chip) => chip.x);
+  const validY = validChips.map((chip) => chip.y);
+  if (!validX.length || !validY.length) {
+    ctx.fillStyle = "#667085";
+    ctx.font = "16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("当前结果中没有可用的 chip 坐标", centerX, centerY);
+    return;
+  }
+
+  const minX = Math.min(...validX); const maxX = Math.max(...validX);
+  const minY = Math.min(...validY); const maxY = Math.max(...validY);
+  const rangeX = maxX - minX || 1;
+  const rangeY = maxY - minY || 1;
+
+  // 48AMA chips are about five times wider than tall. X/Y are grid counts,
+  // so apply this physical chip aspect before fitting the complete map. The
+  // source CSV spans X=81 and Y=451; without this adjustment it becomes an
+  // incorrectly narrow vertical strip in the otherwise square wafer view.
+  const chipAspect = 5;
+  const mapScale = Math.min(
+    (radius * 1.72) / (rangeX * chipAspect),
+    (radius * 1.72) / rangeY,
+  );
+  const pointPaths = {
+    NG: new Path2D(),
+    OK: new Path2D(),
+    UNKNOWN: new Path2D(),
+  };
+  let selectedPoint = null;
+  // Draw every chip as its physical rectangular cell. Fixed-size circles
+  // overlapped adjacent rows, and scan-order sampling formed false triangles.
+  const cellWidth = Math.max(1, chipAspect * mapScale * 0.86);
+  const cellHeight = Math.max(1, mapScale * 0.86);
+
+  chips.forEach((chip, index) => {
+    if (!Number.isFinite(chip.x) || !Number.isFinite(chip.y)) return;
+    if (finalStatus !== "ALL" && String(chip.status || "").toUpperCase() !== finalStatus) return;
+    const x = centerX + (chip.x - (minX + maxX) / 2) * chipAspect * mapScale;
+    const y = centerY + (chip.y - (minY + maxY) / 2) * mapScale;
+    chip.pixelX = x;
+    chip.pixelY = y;
+    visibleIndices.push(index);
+
+    const chipStatus = String(chip.status || "").toUpperCase();
+    if (index === waferMapState.selectedIndex) {
+      selectedPoint = { x, y, status: chipStatus };
+      return;
+    }
+    const path = pointPaths[chipStatus] || pointPaths.UNKNOWN;
+    path.rect(x - cellWidth / 2, y - cellHeight / 2, cellWidth, cellHeight);
+  });
+
+  ctx.fillStyle = "#ef4444";
+  ctx.fill(pointPaths.NG);
+  ctx.fillStyle = "#22c55e";
+  ctx.fill(pointPaths.OK);
+  ctx.fillStyle = "#f59e0b";
+  ctx.fill(pointPaths.UNKNOWN);
+  if (selectedPoint) {
+    ctx.fillStyle = selectedPoint.status === "NG" ? "#ef4444" : selectedPoint.status === "OK" ? "#22c55e" : "#f59e0b";
+    ctx.beginPath();
+    ctx.arc(selectedPoint.x, selectedPoint.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#111827";
+    ctx.beginPath();
+    ctx.arc(selectedPoint.x, selectedPoint.y, 11, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  waferMapState.visibleIndices = visibleIndices;
+}
+
+async function refreshWaferMapToggle() {
+  if (!waferMapEls.panel || !waferMapEls.toggle) return;
+  waferMapEls.panel.classList.toggle("collapsed", Boolean(waferMapState.collapsed));
+  waferMapEls.toggle.textContent = waferMapState.collapsed ? "展开" : "收起";
+  waferMapEls.toggle.setAttribute("aria-expanded", String(!waferMapState.collapsed));
+}
+
+function closeImageZoom() {
+  if (imageZoomModal) imageZoomModal.classList.add("hidden");
+  if (imageZoomImg) imageZoomImg.removeAttribute("src");
+  if (imageZoomMeta) imageZoomMeta.textContent = "";
+}
+
+function toggleWaferMapPanel() {
+  waferMapState.collapsed = !waferMapState.collapsed;
+  refreshWaferMapToggle();
+}
+
+function waferMapSourceKey() {
+  return [
+    controls.resultJson?.value.trim() || "",
+    controls.projectDir?.value.trim() || "",
+  ].join("\u0000");
+}
+
+function renderWaferMapData(data) {
+  waferMapState.chips = Array.isArray(data.chips) ? data.chips : [];
+  waferMapState.selectedIndex = waferMapState.chips.findIndex((chip) => (
+    hasChipFilter() && String(chip.mx) === chipFilter.mx && String(chip.my) === chipFilter.my
+  ));
+  if (waferMapEls.image) {
+    waferMapEls.image.removeAttribute("src");
+    waferMapEls.image.style.display = "none";
+    waferMapEls.image.alt = data.productName ? `${data.productName} wafer map` : "wafer map";
+  }
+  if (waferMapEls.status) {
+    if (data.chipCount) {
+      const mapStatus = waferMapEls.finalStatus?.value || "All";
+      const visibleCount = mapStatus === "All"
+        ? data.chipCount
+        : waferMapState.chips.filter((chip) => chip.status === mapStatus).length;
+      const chipHint = hasChipFilter() ? ` | 已定位 chip (${chipFilter.mx}, ${chipFilter.my})` : "";
+      waferMapEls.status.textContent = `显示 ${visibleCount} / ${data.chipCount || 0} 个 chip${chipHint}`;
+    } else {
+      waferMapEls.status.textContent = "当前结果 JSON 未生成可用 chip 坐标";
+    }
+  }
+  updateChipFilterUi();
+  drawWaferMapPoints();
+}
+
+async function loadWaferMap() {
+  const currentResultJson = controls.resultJson?.value.trim() || "";
+  if (!currentResultJson) {
+    waferMapState.chips = [];
+    waferMapState.selectedIndex = null;
+    waferMapState.sourceKey = "";
+    if (waferMapEls.image) waferMapEls.image.removeAttribute("src");
+    if (waferMapEls.status) waferMapEls.status.textContent = "等待加载结果 JSON。";
+    updateChipFilterUi();
+    if (waferMapEls.canvas) drawWaferMapPoints();
+    return;
+  }
+
+  const sourceKey = waferMapSourceKey();
+  if (waferMapState.sourceKey === sourceKey && waferMapState.chips.length) {
+    renderWaferMapData({
+      productName: currentResultJson.split("/").pop() || "",
+      chipCount: waferMapState.chips.length,
+      chips: waferMapState.chips,
+    });
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      result_json: currentResultJson,
+      project_dir: controls.projectDir?.value.trim() || "",
+    });
+    const response = await fetch(`/api/wafer-map?${params.toString()}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "wafer map 加载失败。");
+    }
+
+    waferMapState.sourceKey = sourceKey;
+    renderWaferMapData(data);
+  } catch (error) {
+    if (waferMapEls.status) {
+      waferMapEls.status.textContent = error.message;
+    }
+  }
+}
+
+if (waferMapEls.toggle) {
+  waferMapEls.toggle.addEventListener("click", toggleWaferMapPanel);
+}
+
+if (waferMapEls.finalStatus) {
+  waferMapEls.finalStatus.addEventListener("change", () => {
+    chipFilter = { mx: "", my: "" };
+    controls.page.value = "1";
+    updateChipFilterUi();
+    // Redraw first so OK/green points disappear immediately; the following
+    // gallery request then applies the same final-result constraint to images.
+    drawWaferMapPoints();
+    loadImages();
+  });
+}
+
+if (waferMapEls.clearChipFilter) {
+  waferMapEls.clearChipFilter.addEventListener("click", () => {
+    chipFilter = { mx: "", my: "" };
+    controls.page.value = "1";
+    updateChipFilterUi();
+    loadImages();
+  });
+}
+
+if (imageZoomModal) {
+  imageZoomModal.addEventListener("click", (event) => {
+    if (event.target.matches("[data-close-zoom]")) {
+      closeImageZoom();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeImageZoom();
+    }
+  });
+}
+
+if (waferMapEls.canvas) {
+  waferMapEls.canvas.addEventListener("click", (event) => {
+    if (waferMapState.collapsed || !waferMapState.chips.length) return;
+    const rect = waferMapEls.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    let nearestIndex = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    waferMapState.visibleIndices.forEach((index) => {
+      const chip = waferMapState.chips[index];
+      if (!Number.isFinite(chip.pixelX) || !Number.isFinite(chip.pixelY)) return;
+      const dx = chip.pixelX - x;
+      const dy = chip.pixelY - y;
+      const dist = dx * dx + dy * dy;
+      if (dist < nearestDistance) {
+        nearestIndex = index;
+        nearestDistance = dist;
+      }
+    });
+    if (nearestIndex == null || nearestDistance > 16 * 16) return;
+    const chip = waferMapState.chips[nearestIndex];
+    chipFilter = { mx: String(chip.mx), my: String(chip.my) };
+    waferMapState.selectedIndex = nearestIndex;
+    controls.page.value = "1";
+    updateChipFilterUi();
+    loadImages();
+  });
+}
+
 async function loadImages() {
   const requestId = ++imageRequestId;
   const currentResultJson = controls.resultJson?.value.trim() || "";
@@ -667,7 +999,12 @@ async function loadImages() {
     controls.page.value = data.page;
     updatePager(data.page, data.totalPages);
     const scale = Number(controls.scaleRatio.value || 1);
-    gallery.style.gridTemplateColumns = `repeat(${Math.max(1, Number(controls.numCol.value || 2))}, minmax(280px, ${Math.round(data.batchWidth * scale)}px))`;
+    const preferredCols = clampGalleryPageSize(controls.numCol.value, 4);
+    if (preferredCols >= 8) {
+      gallery.style.gridTemplateColumns = `repeat(auto-fit, minmax(${Math.max(220, Math.round(data.batchWidth * scale))}px, 1fr))`;
+    } else {
+      gallery.style.gridTemplateColumns = `repeat(${Math.max(1, preferredCols)}, minmax(280px, ${Math.round(data.batchWidth * scale)}px))`;
+    }
     const shuffleText = data.shuffle ? ` | 当前页 Shuffle 开启` : " | 当前页 Shuffle 关闭";
     const jsonFirstText = data.jsonFirst ? " | 当前页 JSON优先" : "";
     const searchText = data.imageSearch ? ` | 查找：${data.imageSearch}` : "";
@@ -681,6 +1018,7 @@ async function loadImages() {
     data.items.forEach((item) => renderCard(item, fragment));
     gallery.appendChild(fragment);
     updateBulkDefaultAction();
+    await loadWaferMap();
   } catch (error) {
     if (requestId !== imageRequestId) return;
     setStatus(error.message, true);
@@ -748,6 +1086,7 @@ function renderCard(item, container = gallery) {
     drawing: false,
     start: null,
     draft: null,
+    imageQuality: "thumbnail",
     serverSnapshot: isTagged({ verdict: annotation.verdict }) ? cloneAnnotationSnapshot(annotation) : null,
     undoSnapshot: null,
   };
@@ -768,9 +1107,20 @@ function renderCard(item, container = gallery) {
       modelPredictionBar.classList.add("defective");
     }
   }
+  // Regions are always stored in source-image pixels. Force the preview box
+  // to the source aspect ratio so thumbnail resize rounding cannot introduce
+  // even a sub-pixel vertical offset in overlays or pointer coordinates.
+  if (item.width > 0 && item.height > 0) {
+    wrap.style.aspectRatio = `${item.width} / ${item.height}`;
+    img.style.height = "100%";
+    img.style.objectFit = "fill";
+  }
+  const qualityState = node.querySelector(".image-quality-state");
+  const loadOriginalButton = node.querySelector(".load-original-btn");
+  const thumbnailUrl = item.thumbnailUrl || item.imageUrl;
   img.loading = "lazy";
   img.decoding = "async";
-  img.src = item.imageUrl;
+  img.src = thumbnailUrl;
   img.alt = item.name;
   noteInput.value = state.note;
   const undoSaveButton = node.querySelector('[data-action="undo-save"]');
@@ -778,7 +1128,34 @@ function renderCard(item, container = gallery) {
   img.addEventListener("load", () => {
     syncCanvasSize(img, canvas);
     drawRegions(canvas, state);
+    if (state.imageQuality === "original") {
+      if (qualityState) qualityState.textContent = "原图";
+      if (loadOriginalButton) {
+        loadOriginalButton.textContent = "已加载原图";
+        loadOriginalButton.disabled = true;
+      }
+    }
   });
+  img.addEventListener("error", () => {
+    if (state.imageQuality !== "thumbnail" || !item.imageUrl) return;
+    state.imageQuality = "original";
+    if (qualityState) qualityState.textContent = "原图（缩略图加载失败）";
+    if (loadOriginalButton) {
+      loadOriginalButton.textContent = "已加载原图";
+      loadOriginalButton.disabled = true;
+    }
+    img.src = item.imageUrl;
+  });
+  if (loadOriginalButton) {
+    loadOriginalButton.addEventListener("click", () => {
+      if (state.imageQuality === "original") return;
+      state.imageQuality = "original";
+      loadOriginalButton.disabled = true;
+      loadOriginalButton.textContent = "正在加载原图...";
+      if (qualityState) qualityState.textContent = "正在切换原图";
+      img.src = item.imageUrl;
+    });
+  }
   node.querySelectorAll("[data-verdict]").forEach((button) => {
     button.addEventListener("click", () => {
       state.verdict = button.dataset.verdict;

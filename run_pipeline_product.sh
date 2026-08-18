@@ -25,7 +25,7 @@ CMD=(
   --prefetch-factor 2
   --light-read-workers 4
   #--no-save-predict-input
-  --save-predict-input
+  #--save-predict-input
   --output-dir "$OUTPUT_DIR"
   --output-json "$OUTPUT_DIR/json/main_inferer_dataloader_results.json"
   --predict-input-root "$OUTPUT_DIR/predict_input"
@@ -36,6 +36,10 @@ CMD=(
   --wafer-map-figsize "$WAFER_MAP_WIDTH" "$WAFER_MAP_HEIGHT"
   --wafer-map-chip-aspect "$WAFER_MAP_CHIP_ASPECT"
 )
+
+# 允许额外参数透传，例如：
+#   ./run_pipeline_product.sh --save-predict-input --save-predict-input-on-any-light-ng
+CMD+=("$@")
 
 if [[ -n "$EXTERNAL_XY_CSV_PATH" ]]; then
   CMD+=(--external-xy-csv-path "$EXTERNAL_XY_CSV_PATH")
