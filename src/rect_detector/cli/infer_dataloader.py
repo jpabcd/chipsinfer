@@ -129,6 +129,12 @@ def main(
         help="When saving crops, save only crops where YOLO detected at least one box.",
     )
     parser.add_argument(
+        "--save-predict-input-on-any-light-ng",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="When any light is NG for a chip, save the input crop from all four lights.",
+    )
+    parser.add_argument(
         "--predict-input-root",
         type=Path,
         default=Path("outputs") / "predict_input",
@@ -203,6 +209,9 @@ def main(
     inferer.yolo_inferers.set_save_predict_input(args.save_predict_input)
     inferer.yolo_inferers.set_save_predict_input_only_with_boxes(
         args.save_predict_input_only_with_boxes
+    )
+    inferer.yolo_inferers.set_save_predict_input_on_any_light_ng(
+        args.save_predict_input_on_any_light_ng
     )
 
     total_batches = 0

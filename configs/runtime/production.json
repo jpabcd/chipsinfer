@@ -30,6 +30,7 @@
     "defect_report": true,
     "auto_external_xy_csv": true,
     "save_predict_input": false,
-    "save_predict_input_only_with_boxes": false
+    "save_predict_input_only_with_boxes": false,
+    "save_predict_input_on_any_light_ng": false
   }
 }

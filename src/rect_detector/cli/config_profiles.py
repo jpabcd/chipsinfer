@@ -94,6 +94,7 @@ def validate_runtime_config(config: Mapping[str, Any]) -> None:
             "auto_external_xy_csv",
             "save_predict_input",
             "save_predict_input_only_with_boxes",
+            "save_predict_input_on_any_light_ng",
         },
     }
     for section, allowed_fields in allowed.items():
@@ -164,6 +165,9 @@ def runtime_defaults(config: Mapping[str, Any]) -> dict[str, Any]:
         "save_predict_input": bool(outputs.get("save_predict_input", False)),
         "save_predict_input_only_with_boxes": bool(
             outputs.get("save_predict_input_only_with_boxes", False)
+        ),
+        "save_predict_input_on_any_light_ng": bool(
+            outputs.get("save_predict_input_on_any_light_ng", False)
         ),
         "inference": inference,
     }

@@ -239,6 +239,12 @@ def _parse_args(argv: list[str] | None) -> tuple[argparse.Namespace, list[str]]:
         default=defaults["save_predict_input_only_with_boxes"],
         help="When saving crops, save only crops where YOLO detected at least one box.",
     )
+    parser.add_argument(
+        "--save-predict-input-on-any-light-ng",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["save_predict_input_on_any_light_ng"],
+        help="When any light is NG for a chip, save the input crop from all four lights.",
+    )
     args, cli_forwarded_args = parser.parse_known_args(argv)
 
     forwarded_args = [
@@ -253,6 +259,11 @@ def _parse_args(argv: list[str] | None) -> tuple[argparse.Namespace, list[str]]:
         "--save-predict-input-only-with-boxes"
         if args.save_predict_input_only_with_boxes
         else "--no-save-predict-input-only-with-boxes"
+    )
+    forwarded_args.append(
+        "--save-predict-input-on-any-light-ng"
+        if args.save_predict_input_on_any_light_ng
+        else "--no-save-predict-input-on-any-light-ng"
     )
 
     managed_option = _has_managed_option(forwarded_args)

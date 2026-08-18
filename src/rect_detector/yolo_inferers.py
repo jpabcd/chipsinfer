@@ -223,6 +223,7 @@ class LightYoloResult:
     predictions: list[YoloPrediction] = field(default_factory=list)
     skipped: list[SkippedCrop] = field(default_factory=list)
     drawn_crops_by_rect_id: dict[int, np.ndarray] = field(default_factory=dict)
+    crops_by_rect_id: dict[int, np.ndarray] = field(default_factory=dict)
 
     @property
     def predictions_by_rect_id(self) -> dict[int, YoloPrediction]:
@@ -461,6 +462,7 @@ class YoloInferer:
         self.save_predict_input = bool(config.save_predict_input)
         self.save_predict_input_only_with_boxes = bool(config.save_predict_input_only_with_boxes)
         self.predict_input_dir = Path("temp") / "predict_input"
+        self.save_predict_input_on_any_light_ng = False
         if self.draw:
             self._ensure_draw_dir()
         if self.save_predict_input:
@@ -737,7 +739,9 @@ class YoloInferer:
             ):
                 prediction = self._analyse_result(result, aligned_rect, crop_box)
                 light_results[batch_index].predictions.append(prediction)
-                if self.save_predict_input and (
+                if self.save_predict_input_on_any_light_ng:
+                    light_results[batch_index].crops_by_rect_id[prediction.rect_id] = crop_img
+                if self.save_predict_input and not self.save_predict_input_on_any_light_ng and (
                     not self.save_predict_input_only_with_boxes or prediction.detections
                 ):
                     self._save_predict_input(prediction, crop_img)
@@ -778,6 +782,7 @@ class CombinedYoloInferers:
             )
             for light in resolved_config.lights
         }
+        self.save_predict_input_on_any_light_ng = False
 
     @classmethod
     def from_json(cls, path: str | Path, **kwargs: Any) -> "CombinedYoloInferers":
@@ -802,6 +807,13 @@ class CombinedYoloInferers:
     def set_save_predict_input_only_with_boxes(self, enabled: bool) -> None:
         for inferer in self.inferers.values():
             inferer.save_predict_input_only_with_boxes = enabled
+
+    def set_save_predict_input_on_any_light_ng(self, enabled: bool) -> None:
+        self.save_predict_input_on_any_light_ng = enabled and all(
+            inferer.save_predict_input for inferer in self.inferers.values()
+        )
+        for inferer in self.inferers.values():
+            inferer.save_predict_input_on_any_light_ng = self.save_predict_input_on_any_light_ng
 
     def set_predict_input_dir(self, directory: str | Path) -> None:
         for inferer in self.inferers.values():
@@ -841,9 +853,23 @@ class CombinedYoloInferers:
                 name: per_light_batches[name][batch_index]
                 for name in self.inferers
             }
-            combined_results.append(self._combine_per_light_results(per_light, align_result))
+            combined_result = self._combine_per_light_results(per_light, align_result)
+            if self.save_predict_input_on_any_light_ng:
+                self._save_crops_when_any_light_ng(combined_result)
+            combined_results.append(combined_result)
         return combined_results
 
+    def _save_crops_when_any_light_ng(self, combined_result: CombinedYoloResult) -> None:
+        for chip in combined_result.per_chip.values():
+            predictions = list(chip.light_predictions.values())
+            if not any(prediction is not None and prediction.pred_status == "NG" for prediction in predictions):
+                continue
+            for light_name, prediction in chip.light_predictions.items():
+                if prediction is None:
+                    continue
+                crop = combined_result.per_light[light_name].crops_by_rect_id.get(prediction.rect_id)
+                if crop is not None:
+                    self.inferers[light_name]._save_predict_input(prediction, crop)
     def _validate_light_images(self, light_images: Mapping[str, np.ndarray]) -> None:
         expected_names = set(self.inferers)
         actual_names = set(light_images)

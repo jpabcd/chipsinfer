@@ -20,5 +20,5 @@ RUNTIME_CONFIG="${RUNTIME_CONFIG:-configs/runtime/production.json}"
   "$@"
 
 
-#需要保存时显式传入：./run_pipeline_line.sh --save-predict-input
+#需要保存时显式传入：./run_pipeline_line.sh --save-predict-input --save-predict-input-on-any-light-ng
 #通常产线：./run_pipeline_line.sh --output-root outputs/48AMA_line --watch --rescan-interval 30

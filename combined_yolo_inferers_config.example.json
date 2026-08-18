@@ -4,9 +4,7 @@
       "name": "light_1",
       "weight": "./my_weights/20260810-101202-f14b543b-light1/output/train/weights/best.pt",
       "analyse": {
-        "中间线":{
-          "enabled": false
-        },
+        "中间线":{"enabled": false},
         "可忽略-曝点":{"enabled": false}
 
       },
@@ -26,7 +24,7 @@
     },
     {
       "name": "light_2",
-      "weight": "./my_weights/20260807-200159-fb52508b-light2/output/train/weights/best.pt",
+      "weight": "./my_weights/20260814-132731-816ded8b-light2/output/train/weights/best.pt",
       "analyse": {
         "可忽略-曝点":{"enabled": false},
         "可忽略-线条":{"enabled": false}
@@ -47,12 +45,11 @@
     },
     {
       "name": "light_3",
-      "weight": "./my_weights/20260802-190502-4ebc8e9e-light3/output/train/weights/best.pt",
+      "weight": "./my_weights/20260814-140224-e9cd1f8a-light3/output/train/weights/best.pt",
       "analyse": {
-          "中间线": {
-            "enabled": false
-          },
-        "可忽略-曝点":{"area": {">": 500}}
+          "中间线": {"enabled": false},
+          "可忽略-曝点":{"enabled": false},
+          "线条问题":{"width": {">": 150}}
       },
         "crop_width": 795,
         "crop_height": 161,
@@ -70,14 +67,13 @@
     },
     {
       "name": "light_4",
-      "weight": "./my_weights/20260807-163811-a3041272-light4/output/train/weights/best.pt",
+      "weight": "./my_weights/20260814-150522-251e48e9-light4/output/train/weights/best.pt",
       "analyse": {
-          "中间线": {
-            "enabled": false
-          },
-          "细线问题":{"confidence": {">": 0.5}},
-            "可忽略-曝点":{"area": {">": 500}}
-          },
+          "中间线": {"enabled": false},
+          "可忽略-曝点":{"enabled": false},
+          "细线问题":{"enabled": false},
+          "轻微灰斑":{"enabled": false}
+        },
           "crop_width": 795,
           "crop_height": 161,
           "conf": 0.35,
