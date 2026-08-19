@@ -10,3 +10,4 @@ my_weights/
 inspection_web_app/.thumbnail_cache
 temp
 BAAI
+benchmark_raw_io.py
