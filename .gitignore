@@ -8,3 +8,4 @@ inspection_web_app/__pycache__/
 my_weights/
 自训练平台/
 inspection_web_app/.thumbnail_cache
+benchmark_raw_io.py

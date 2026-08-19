@@ -1,0 +1,32 @@
+[project]
+name = "chipsinfer"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "gradio>=6.24.0",
+    "matplotlib>=3.11.1",
+    "numpy>=2.5.2",
+    "opencv-python-headless==4.10.0.84",
+    "orjson>=3.11.9",
+    "pandas>=3.0.5",
+    "pillow>=12.3.0",
+    "ultralytics==8.4.115",
+    "torch==2.8.0+cu128",
+    "torchaudio==2.8.0+cu128",
+    "torchvision==0.23.0+cu128",
+]
+
+[[tool.uv.index]]
+name = "tsinghua"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
