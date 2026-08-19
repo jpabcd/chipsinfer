@@ -93,6 +93,7 @@ let jsonOptionsFromTxt = [];
 let rememberedJsons = [];
 let imageRequestId = 0;
 let statsRequestId = 0;
+let chipNavigationTimer = null;
 
 // One resize listener for the whole page is substantially cheaper than one
 // listener per card, especially when a page contains dozens of cards.
@@ -693,6 +694,77 @@ function updateChipFilterUi() {
     : "清除 chip 定位";
 }
 
+function selectWaferChip(index, { debounceGallery = false } = {}) {
+  const chip = waferMapState.chips[index];
+  if (!chip) return;
+
+  chipFilter = { mx: String(chip.mx), my: String(chip.my) };
+  waferMapState.selectedIndex = index;
+  controls.page.value = "1";
+  updateChipFilterUi();
+  drawWaferMapPoints();
+
+  if (chipNavigationTimer) {
+    clearTimeout(chipNavigationTimer);
+    chipNavigationTimer = null;
+  }
+  if (debounceGallery) {
+    chipNavigationTimer = window.setTimeout(() => {
+      chipNavigationTimer = null;
+      loadImages();
+    }, 120);
+  } else {
+    loadImages();
+  }
+}
+
+function findAdjacentChip(direction) {
+  const currentIndex = waferMapState.selectedIndex;
+  const current = waferMapState.chips[currentIndex];
+  if (!current || !Number.isFinite(current.x) || !Number.isFinite(current.y)) return null;
+
+  let bestIndex = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+  waferMapState.visibleIndices.forEach((index) => {
+    if (index === currentIndex) return;
+    const candidate = waferMapState.chips[index];
+    if (!candidate || !Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) return;
+
+    const deltaX = candidate.x - current.x;
+    const deltaY = candidate.y - current.y;
+    let forwardDistance;
+    let perpendicularDistance;
+    if (direction === "ArrowLeft") {
+      if (deltaX >= 0) return;
+      forwardDistance = -deltaX;
+      perpendicularDistance = Math.abs(deltaY);
+    } else if (direction === "ArrowRight") {
+      if (deltaX <= 0) return;
+      forwardDistance = deltaX;
+      perpendicularDistance = Math.abs(deltaY);
+    } else if (direction === "ArrowUp") {
+      if (deltaY >= 0) return;
+      forwardDistance = -deltaY;
+      perpendicularDistance = Math.abs(deltaX);
+    } else if (direction === "ArrowDown") {
+      if (deltaY <= 0) return;
+      forwardDistance = deltaY;
+      perpendicularDistance = Math.abs(deltaX);
+    } else {
+      return;
+    }
+
+    // Prioritize the same row/column; when the wafer edge has no exact grid
+    // neighbor, fall back to the closest chip in the requested direction.
+    const score = perpendicularDistance * 10000 + forwardDistance;
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
 function drawWaferMapPoints() {
   if (!waferMapEls.canvas) return;
   const canvas = waferMapEls.canvas;
@@ -950,6 +1022,7 @@ if (imageZoomModal) {
 if (waferMapEls.canvas) {
   waferMapEls.canvas.addEventListener("click", (event) => {
     if (waferMapState.collapsed || !waferMapState.chips.length) return;
+    waferMapEls.canvas.focus({ preventScroll: true });
     const rect = waferMapEls.canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
@@ -966,13 +1039,23 @@ if (waferMapEls.canvas) {
         nearestDistance = dist;
       }
     });
-    if (nearestIndex == null || nearestDistance > 16 * 16) return;
-    const chip = waferMapState.chips[nearestIndex];
-    chipFilter = { mx: String(chip.mx), my: String(chip.my) };
-    waferMapState.selectedIndex = nearestIndex;
-    controls.page.value = "1";
-    updateChipFilterUi();
-    loadImages();
+    if (nearestIndex == null) return;
+    selectWaferChip(nearestIndex);
+  });
+
+  waferMapEls.canvas.addEventListener("keydown", (event) => {
+    if (![
+      "ArrowLeft",
+      "ArrowRight",
+      "ArrowUp",
+      "ArrowDown",
+    ].includes(event.key)) return;
+    if (waferMapState.collapsed || waferMapState.selectedIndex == null) return;
+
+    const nextIndex = findAdjacentChip(event.key);
+    if (nextIndex == null) return;
+    event.preventDefault();
+    selectWaferChip(nextIndex, { debounceGallery: true });
   });
 }
 

@@ -328,6 +328,11 @@ textarea {
 .wafer-map-view canvas {
   pointer-events: auto;
   cursor: crosshair;
+  outline: none;
+}
+
+.wafer-map-view canvas:focus-visible {
+  box-shadow: inset 0 0 0 3px #1f7a8c;
 }
 
 .image-zoom-modal {
