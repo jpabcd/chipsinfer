@@ -9,7 +9,7 @@
 
       },
         "crop_width": 795,
-        "crop_height": 161,
+        "crop_height": 170,
         "conf": 0.35,
         "iou": 0.7,
         "imgsz": 320,
@@ -30,7 +30,7 @@
         "可忽略-线条":{"enabled": false}
       },
         "crop_width": 795,
-        "crop_height": 161,
+        "crop_height": 170,
         "conf": 0.35,
         "iou": 0.7,
         "imgsz": 320,
@@ -52,7 +52,7 @@
           "线条问题":{"width": {">": 150}}
       },
         "crop_width": 795,
-        "crop_height": 161,
+        "crop_height": 170,
         "conf": 0.35,
         "iou": 0.7,
         "imgsz": 320,
@@ -75,7 +75,7 @@
           "轻微灰斑":{"enabled": false}
         },
           "crop_width": 795,
-          "crop_height": 161,
+          "crop_height": 170,
           "conf": 0.35,
           "iou": 0.7,
           "imgsz": 320,
