@@ -40,7 +40,7 @@ INFER_MODEL_PREDICTION_MAP = {
     "NG": "缺陷品",
     "INVALID": "未知",
 }
-DEFAULT_RESULT_JSON = APP_DIR.parent / "outputs" / "json" / "main_inferer_dataloader_results.json"
+DEFAULT_RESULT_JSON = APP_DIR.parent / "outputs" / "json" / "main_inferer_dataloader_results.jsonl"
 IMAGE_META_CACHE = {}
 INFERENCE_ITEMS_CACHE = {}
 INFERENCE_BASE_CACHE = {}
@@ -243,7 +243,7 @@ def load_json_options_from_txt(txt_path, project_dir=None):
             continue
         seen.add(key)
 
-        if resolved.suffix.lower() != ".json":
+        if resolved.suffix.lower() not in (".json", ".jsonl"):
             continue
 
         options.append({
@@ -370,6 +370,24 @@ def restore_model_prediction_index(items):
             MODEL_PREDICTION_BY_PATH[os.path.normcase(path)] = prediction
 
 
+def iter_result_samples(result_path):
+    """Yield sample records from either legacy JSON or line-delimited JSONL."""
+    if result_path.suffix.lower() == ".jsonl":
+        with result_path.open("r", encoding="utf-8") as file:
+            for raw_line in file:
+                line = raw_line.strip()
+                if line:
+                    yield json.loads(line)
+        return
+
+    if orjson is not None:
+        payload = orjson.loads(result_path.read_bytes())
+    else:
+        with result_path.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+    yield from payload.get("samples", [])
+
+
 def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
     """Build one normalized base list. Call through _load_inference_base_items."""
     load_started = time.perf_counter()
@@ -393,19 +411,15 @@ def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
     except (OSError, EOFError, pickle.PickleError, ValueError):
         pass
 
-    parser_name = "orjson" if orjson is not None else "stdlib json"
+    parser_name = "JSONL" if result_json_path.suffix.lower() == ".jsonl" else (
+        "orjson" if orjson is not None else "stdlib json"
+    )
     print(
         f"Inference cache miss; parsing result JSON with {parser_name}: {result_json_path}",
         flush=True,
     )
-    if orjson is not None:
-        payload = orjson.loads(result_json_path.read_bytes())
-    else:
-        with result_json_path.open("r", encoding="utf-8") as file:
-            payload = json.load(file)
-
     items = []
-    for sample in payload.get("samples", []):
+    for sample in iter_result_samples(result_json_path):
         for chip in sample.get("chips", []):
             yolo_block = chip.get("yolo") or {}
             for light_name, light_data in yolo_block.items():
@@ -1348,11 +1362,7 @@ class InspectionHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            if orjson is not None:
-                payload = orjson.loads(result_json_path.read_bytes())
-            else:
-                with result_json_path.open("r", encoding="utf-8") as file:
-                    payload = json.load(file)
+            samples = iter_result_samples(result_json_path)
         except (OSError, ValueError, json.JSONDecodeError) as error:
             self.send_json({"error": f"读取 wafer map 数据失败：{error}"}, HTTPStatus.BAD_REQUEST)
             return
@@ -1360,7 +1370,7 @@ class InspectionHandler(BaseHTTPRequestHandler):
         coordinate_index = _read_wafer_map_coordinates(csv_path)
 
         chip_records = []
-        for sample in payload.get("samples", []):
+        for sample in samples:
             for chip in sample.get("chips", []):
                 mechanical = chip.get("mechanical_columns") or {}
                 mx = mechanical.get("MX")

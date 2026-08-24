@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 from rect_detector.export.dataloader_export import (
     build_export_payload,
     build_sample_record,
+    json_default,
     safe_relpath,
     write_export_json,
 )
@@ -143,8 +145,8 @@ def main(
     parser.add_argument(
         "--output-json",
         type=Path,
-        default=Path("outputs") / "json" / "main_inferer_dataloader_results.json",
-        help="Final merged JSON output path.",
+        default=Path("outputs") / "json" / "main_inferer_dataloader_results.jsonl",
+        help="Final JSONL output path; one sample record per line.",
     )
     args = parser.parse_args(argv)
 
@@ -221,78 +223,89 @@ def main(
     total_samples_skipped_error = 0
     run_start = perf_counter()
 
-    exported_samples: list[dict[str, Any]] = []
-    exported_skipped_errors: list[dict[str, Any]] = []
+    if args.output_json.suffix.lower() != ".jsonl":
+        args.output_json = args.output_json.with_suffix(".jsonl")
+    output_jsonl = args.output_json
+    summary_json = output_jsonl.with_suffix(".summary.json")
+    skipped_errors_jsonl = output_jsonl.with_suffix(".skipped.jsonl")
+    output_jsonl.parent.mkdir(parents=True, exist_ok=True)
 
-    for batch_index, batch in enumerate(dataloader):
-        if args.max_batches > 0 and batch_index >= args.max_batches:
-            break
+    with output_jsonl.open("w", encoding="utf-8") as samples_sink, skipped_errors_jsonl.open(
+        "w", encoding="utf-8"
+    ) as skipped_sink:
+        for batch_index, batch in enumerate(dataloader):
+            if args.max_batches > 0 and batch_index >= args.max_batches:
+                break
 
-        sample_ids = list(batch["sample_ids"])
-        num_strs = list(batch["num_strs"])
-        rect_input_imgs = list(batch["rect_input_imgs"])
-        mechanical_infos_batch = list(batch["mechanical_infos"])
-        light_image_batches = list(batch["light_images"])
+            sample_ids = list(batch["sample_ids"])
+            num_strs = list(batch["num_strs"])
+            rect_input_imgs = list(batch["rect_input_imgs"])
+            mechanical_infos_batch = list(batch["mechanical_infos"])
+            light_image_batches = list(batch["light_images"])
 
-        total_batches += 1
-        total_samples_seen += len(sample_ids)
+            total_batches += 1
+            total_samples_seen += len(sample_ids)
 
-        valid_indices: list[int] = []
-        for i, (rect_input_img, mechanical_infos) in enumerate(zip(rect_input_imgs, mechanical_infos_batch)):
-            if is_no_chip_sample(rect_input_img=rect_input_img, mechanical_infos=mechanical_infos):
-                total_samples_skipped_no_chip += 1
+            valid_indices: list[int] = []
+            for i, (rect_input_img, mechanical_infos) in enumerate(zip(rect_input_imgs, mechanical_infos_batch)):
+                if is_no_chip_sample(rect_input_img=rect_input_img, mechanical_infos=mechanical_infos):
+                    total_samples_skipped_no_chip += 1
+                    continue
+                valid_indices.append(i)
+
+            if not valid_indices:
+                print(f"batch[{batch_index}] skipped: all {len(sample_ids)} samples have no chips")
                 continue
-            valid_indices.append(i)
 
-        if not valid_indices:
-            print(f"batch[{batch_index}] skipped: all {len(sample_ids)} samples have no chips")
-            continue
+            valid_rect_input_imgs = [rect_input_imgs[i] for i in valid_indices]
+            valid_mechanical_infos = [mechanical_infos_batch[i] for i in valid_indices]
+            valid_light_image_batches = prepare_light_batches([light_image_batches[i] for i in valid_indices])
+            valid_sample_ids = [sample_ids[i] for i in valid_indices]
+            valid_num_strs = [num_strs[i] for i in valid_indices]
 
-        valid_rect_input_imgs = [rect_input_imgs[i] for i in valid_indices]
-        valid_mechanical_infos = [mechanical_infos_batch[i] for i in valid_indices]
-        valid_light_image_batches = prepare_light_batches([light_image_batches[i] for i in valid_indices])
-        valid_sample_ids = [sample_ids[i] for i in valid_indices]
-        valid_num_strs = [num_strs[i] for i in valid_indices]
+            infer_start = perf_counter()
+            indexed_results, skipped_on_error = run_batch_with_fallback(
+                inferer=inferer,
+                rect_input_imgs=valid_rect_input_imgs,
+                mechanical_infos=valid_mechanical_infos,
+                light_image_batches=valid_light_image_batches,
+                sample_ids=valid_sample_ids,
+                num_strs=valid_num_strs,
+            )
+            infer_elapsed = perf_counter() - infer_start
+            total_samples_inferred += len(indexed_results)
+            total_samples_skipped_error += len(skipped_on_error)
 
-        infer_start = perf_counter()
-        indexed_results, skipped_on_error = run_batch_with_fallback(
-            inferer=inferer,
-            rect_input_imgs=valid_rect_input_imgs,
-            mechanical_infos=valid_mechanical_infos,
-            light_image_batches=valid_light_image_batches,
-            sample_ids=valid_sample_ids,
-            num_strs=valid_num_strs,
-        )
-        infer_elapsed = perf_counter() - infer_start
-        total_samples_inferred += len(indexed_results)
-        total_samples_skipped_error += len(skipped_on_error)
-
-        print(
-            f"batch[{batch_index}] inferred={len(indexed_results)} "
-            f"skipped_no_chip={len(sample_ids) - len(valid_indices)} skipped_error={len(skipped_on_error)} "
-            f"elapsed_s={infer_elapsed:.3f}"
-        )
-
-        for sample_id, num_str, error_msg in skipped_on_error:
-            print(f"  skipped sample_id={sample_id} num_str={num_str} error={error_msg}")
-            exported_skipped_errors.append(
-                {
-                    "sample_id": sample_id,
-                    "num_str": num_str,
-                    "error": error_msg,
-                }
+            print(
+                f"batch[{batch_index}] inferred={len(indexed_results)} "
+                f"skipped_no_chip={len(sample_ids) - len(valid_indices)} skipped_error={len(skipped_on_error)} "
+                f"elapsed_s={infer_elapsed:.3f}"
             )
 
-        for local_valid_index, result in indexed_results:
-            sample_id = valid_sample_ids[local_valid_index]
-            num_str = valid_num_strs[local_valid_index]
-            print_sample_result(
-                result=result,
-                sample_id=sample_id,
-                num_str=num_str,
-            )
-            exported_samples.append(
-                build_sample_record(
+            for sample_id, num_str, error_msg in skipped_on_error:
+                print(f"  skipped sample_id={sample_id} num_str={num_str} error={error_msg}")
+                skipped_sink.write(
+                    json.dumps(
+                        {
+                            "sample_id": sample_id,
+                            "num_str": num_str,
+                            "error": error_msg,
+                        },
+                        ensure_ascii=False,
+                        default=json_default,
+                    )
+                    + "\n"
+                )
+
+            for local_valid_index, result in indexed_results:
+                sample_id = valid_sample_ids[local_valid_index]
+                num_str = valid_num_strs[local_valid_index]
+                print_sample_result(
+                    result=result,
+                    sample_id=sample_id,
+                    num_str=num_str,
+                )
+                sample_record = build_sample_record(
                     result=result,
                     sample_id=sample_id,
                     num_str=num_str,
@@ -300,10 +313,24 @@ def main(
                     save_predict_input=args.save_predict_input,
                     workspace_root=workspace_root,
                 )
-            )
+                serialized_record = json.dumps(
+                    sample_record,
+                    ensure_ascii=False,
+                    default=json_default,
+                )
+                samples_sink.write(
+                    serialized_record + "\n"
+                )
+                del serialized_record, sample_record
 
-        if args.max_samples > 0 and total_samples_inferred >= args.max_samples:
-            break
+            if args.max_samples > 0 and total_samples_inferred >= args.max_samples:
+                break
+
+            del indexed_results, skipped_on_error
+            del valid_rect_input_imgs, valid_mechanical_infos, valid_light_image_batches
+            del valid_sample_ids, valid_num_strs
+            del sample_ids, num_strs, rect_input_imgs, mechanical_infos_batch, light_image_batches
+            del batch
 
     run_elapsed = perf_counter() - run_start
 
@@ -351,10 +378,14 @@ def main(
         total_samples_skipped_no_chip=total_samples_skipped_no_chip,
         total_samples_skipped_error=total_samples_skipped_error,
         elapsed_s=run_elapsed,
-        samples=exported_samples,
-        skipped_errors=exported_skipped_errors,
+        samples=[],
+        skipped_errors=[],
     )
-    write_export_json(args.output_json, payload)
+    payload.pop("samples")
+    payload.pop("skipped_errors")
+    payload["result_jsonl"] = safe_relpath(output_jsonl, workspace_root)
+    payload["skipped_errors_jsonl"] = safe_relpath(skipped_errors_jsonl, workspace_root)
+    write_export_json(summary_json, payload)
 
     throughput = total_samples_inferred / run_elapsed if run_elapsed > 0 else 0.0
     print("\n===== Run Summary =====")
@@ -365,7 +396,8 @@ def main(
     print(f"samples_skipped_error={total_samples_skipped_error}")
     print(f"elapsed_s={run_elapsed:.3f}")
     print(f"inferred_samples_per_s={throughput:.2f}")
-    print(f"export_json={safe_relpath(args.output_json, workspace_root)}")
+    print(f"export_jsonl={safe_relpath(output_jsonl, workspace_root)}")
+    print(f"export_summary={safe_relpath(summary_json, workspace_root)}")
     return inferer
 
 

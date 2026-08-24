@@ -870,6 +870,8 @@ class CombinedYoloInferers:
                 crop = combined_result.per_light[light_name].crops_by_rect_id.get(prediction.rect_id)
                 if crop is not None:
                     self.inferers[light_name]._save_predict_input(prediction, crop)
+        for light_result in combined_result.per_light.values():
+            light_result.crops_by_rect_id.clear()
     def _validate_light_images(self, light_images: Mapping[str, np.ndarray]) -> None:
         expected_names = set(self.inferers)
         actual_names = set(light_images)

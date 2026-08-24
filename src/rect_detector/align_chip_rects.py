@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable as IterableABC
+from math import comb
 from itertools import combinations
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Iterable
 
 import numpy as np
@@ -179,18 +181,6 @@ def align_rects_to_mechanical_txt(
             allow_x_reverse=allow_x_reverse,
             allow_y_reverse=allow_y_reverse,
         )
-        if partial_candidate is None:
-            partial_candidate = _try_exhaustive_subset_alignment(
-                rect_points=rect_points,
-                mech_points=mech_points,
-                mech_delta_x=mech_delta_x,
-                mech_delta_y=mech_delta_y,
-                delta_x_pixel=delta_x_pixel,
-                delta_y_pixel=delta_y_pixel,
-                delta_weight=delta_weight,
-                allow_x_reverse=allow_x_reverse,
-                allow_y_reverse=allow_y_reverse,
-            )
 
     if partial_candidate is not None:
         score, rmse, delta_penalty, pairs, affine, residuals, x_reversed, y_reversed = partial_candidate
@@ -335,6 +325,7 @@ def _try_column_constrained_partial_alignment(
     allow_x_reverse: bool,
     allow_y_reverse: bool,
     max_candidates: int = 2000,
+    max_options_per_column: int = 256,
 ) -> tuple[float, float, float, list[tuple[int, int]], np.ndarray, np.ndarray, bool, bool] | None:
     """Search missing positions only inside columns whose counts differ."""
     if delta_x_pixel is None:
@@ -368,6 +359,11 @@ def _try_column_constrained_partial_alignment(
                     delta=delta_y_pixel,
                 )
                 mech_order = sorted(mech_group, key=lambda idx: mech_points[idx, 1], reverse=y_reversed)
+                option_count = comb(max(len(rect_order), len(mech_order)), min(len(rect_order), len(mech_order)))
+                if option_count > max_options_per_column:
+                    # Do not materialize a combinatorial list of candidates.
+                    # The caller falls back to the bounded monotonic matcher.
+                    return None
                 column_options = _ordered_column_pair_options(rect_order, mech_order)
                 if not column_options:
                     continue
@@ -564,7 +560,8 @@ def _try_exhaustive_subset_alignment(
     allow_x_reverse: bool,
     allow_y_reverse: bool,
     max_missing: int = 3,
-    max_candidates: int = 10000,
+    max_candidates: int = 2000,
+    max_duration_s: float = 2.0,
 ) -> tuple[float, float, float, list[tuple[int, int]], np.ndarray, np.ndarray, bool, bool] | None:
     rect_count = len(rect_points)
     mech_count = len(mech_points)
@@ -574,9 +571,12 @@ def _try_exhaustive_subset_alignment(
 
     best = None
     tried = 0
+    start_time = perf_counter()
 
     if rect_count > mech_count:
         for keep_rect_indices in combinations(range(rect_count), mech_count):
+            if perf_counter() - start_time > max_duration_s:
+                return best
             tried += 1
             if tried > max_candidates:
                 return best
@@ -598,6 +598,8 @@ def _try_exhaustive_subset_alignment(
                 best = mapped if best is None or mapped[0] < best[0] else best
     else:
         for keep_mech_indices in combinations(range(mech_count), rect_count):
+            if perf_counter() - start_time > max_duration_s:
+                return best
             tried += 1
             if tried > max_candidates:
                 return best

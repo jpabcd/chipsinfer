@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import importlib
 from pathlib import Path
+from typing import Iterator
 
 import pandas as pd
 
@@ -74,6 +75,39 @@ def _build_defect_rows(payload: dict) -> tuple[list[dict], list[str]]:
     return rows, light_names
 
 
+def _iter_jsonl_samples(samples_jsonl_path: Path) -> Iterator[dict]:
+    with samples_jsonl_path.open("r", encoding="utf-8") as source:
+        for raw_line in source:
+            line = raw_line.strip()
+            if line:
+                yield json.loads(line)
+
+
+def _build_defect_rows_from_jsonl(samples_jsonl_path: Path) -> tuple[list[dict], list[str]]:
+    light_names: set[str] = set()
+    for sample in _iter_jsonl_samples(samples_jsonl_path):
+        for chip in sample.get("chips", []):
+            light_names.update(str(name) for name in (chip.get("yolo") or {}))
+
+    ordered_light_names = sorted(light_names)
+    rows: list[dict] = []
+    for sample in _iter_jsonl_samples(samples_jsonl_path):
+        for chip in sample.get("chips", []):
+            mech = chip.get("mechanical_columns") or {}
+            row = {
+                "MX": _to_int(mech.get("MX"), "MX"),
+                "MY": _to_int(mech.get("MY"), "MY"),
+            }
+            has_ng = False
+            for light_name in ordered_light_names:
+                status = _light_status_from_chip(chip, light_name)
+                row[light_name] = status
+                has_ng = has_ng or status == "NG"
+            row["overall"] = "NG" if has_ng else "OK"
+            rows.append(row)
+    return rows, ordered_light_names
+
+
 def _merge_xy(
     report_df: pd.DataFrame,
     external_csv_path: Path,
@@ -126,14 +160,19 @@ def export_defect_report(
     wafer_map_path: Path | str | None = None,
     wafer_map_figsize: tuple[float, float] = (10.0, 8.0),
     wafer_map_chip_aspect: float = 5.0,
+    samples_jsonl_path: Path | str | None = None,
 ) -> Path:
     output_json_path = _resolve_path(output_json_path)
     defect_report_path = _resolve_path(defect_report_path)
 
-    with output_json_path.open("r", encoding="utf-8") as file:
-        payload = json.load(file)
-
-    rows, light_names = _build_defect_rows(payload)
+    if samples_jsonl_path is not None:
+        samples_jsonl_path = _resolve_path(samples_jsonl_path)
+    if samples_jsonl_path is not None and samples_jsonl_path.is_file():
+        rows, light_names = _build_defect_rows_from_jsonl(samples_jsonl_path)
+    else:
+        with output_json_path.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+        rows, light_names = _build_defect_rows(payload)
     report_columns = ["MX", "MY"] + light_names + ["overall"]
     report_df = pd.DataFrame(rows, columns=report_columns)
 

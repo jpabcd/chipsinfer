@@ -27,7 +27,7 @@ CMD=(
   --no-save-predict-input
   #--save-predict-input
   --output-dir "$OUTPUT_DIR"
-  --output-json "$OUTPUT_DIR/json/main_inferer_dataloader_results.json"
+  --output-json "$OUTPUT_DIR/json/main_inferer_dataloader_results.jsonl"
   --predict-input-root "$OUTPUT_DIR/predict_input"
   --defect-report
   --defect-report-path "$OUTPUT_DIR/csv/S26G03090-06.csv"
