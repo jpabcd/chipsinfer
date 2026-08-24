@@ -135,7 +135,9 @@ def run_product(
     args = parser.parse_args(argv)
 
     output_dir = Path(args.output_dir)
-    output_json_path = Path(args.output_json) if args.output_json else output_dir / "json" / "main_inferer_dataloader_results.json"
+    output_json_path = Path(args.output_json) if args.output_json else output_dir / "json" / "main_inferer_dataloader_results.jsonl"
+    if output_json_path.suffix.lower() != ".jsonl":
+        output_json_path = output_json_path.with_suffix(".jsonl")
     predict_input_root = Path(args.predict_input_root) if args.predict_input_root else output_dir / "predict_input"
     defect_report_path = Path(args.defect_report_path) if args.defect_report_path else output_dir / "csv" / "defect_report.csv"
     wafer_map_path = Path(args.wafer_map_path) if args.wafer_map_path else output_dir / "plots" / "wafer_map_overall.png"
@@ -225,7 +227,6 @@ def run_product(
         if args.save_predict_input_on_any_light_ng
         else "--no-save-predict-input-on-any-light-ng"
     )
-
     inferer = infer_dataloader_main(infer_args, inferer=inferer)
 
     if args.defect_report or args.external_xy_csv_path.strip():
@@ -259,6 +260,7 @@ def run_product(
             wafer_map_path=wafer_map_path if external_xy_csv_path else None,
             wafer_map_figsize=tuple(args.wafer_map_figsize),
             wafer_map_chip_aspect=args.wafer_map_chip_aspect,
+            samples_jsonl_path=output_json_path,
         )
         print(f"defect_report={generated_path}")
         if external_xy_csv_path:

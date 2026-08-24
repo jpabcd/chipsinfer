@@ -223,3 +223,53 @@ def write_export_json(output_json: Path, payload: dict[str, Any]) -> None:
     output_json.parent.mkdir(parents=True, exist_ok=True)
     with output_json.open("w", encoding="utf-8") as file:
         json.dump(payload, file, ensure_ascii=False, indent=2, default=json_default)
+
+
+def write_export_json_streamed(
+    output_json: Path,
+    payload_without_arrays: dict[str, Any],
+    samples_jsonl: Path,
+    skipped_errors_jsonl: Path,
+) -> None:
+    """Write final export JSON while streaming large arrays from jsonl files.
+
+    payload_without_arrays must not contain keys: samples, skipped_errors.
+    """
+
+    def _write_jsonl_array(file_obj: Any, jsonl_path: Path, indent: str = "  ") -> None:
+        child_indent = indent + "  "
+        wrote_item = False
+        if jsonl_path.is_file():
+            with jsonl_path.open("r", encoding="utf-8") as source:
+                for raw_line in source:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    if wrote_item:
+                        file_obj.write(",\n")
+                    file_obj.write(f"{child_indent}{line}")
+                    wrote_item = True
+        if wrote_item:
+            file_obj.write("\n")
+        file_obj.write(f"{indent}]")
+
+    payload = dict(payload_without_arrays)
+    payload.pop("samples", None)
+    payload.pop("skipped_errors", None)
+
+    output_json.parent.mkdir(parents=True, exist_ok=True)
+    with output_json.open("w", encoding="utf-8") as file:
+        file.write("{\n")
+        items = list(payload.items())
+        for index, (key, value) in enumerate(items):
+            key_text = json.dumps(key, ensure_ascii=False)
+            value_text = json.dumps(value, ensure_ascii=False, default=json_default)
+            file.write(f"  {key_text}: {value_text}")
+            file.write(",\n" if index < len(items) - 1 else ",\n")
+
+        file.write("  \"samples\": [\n")
+        _write_jsonl_array(file, samples_jsonl, indent="  ")
+        file.write(",\n")
+        file.write("  \"skipped_errors\": [\n")
+        _write_jsonl_array(file, skipped_errors_jsonl, indent="  ")
+        file.write("\n}\n")

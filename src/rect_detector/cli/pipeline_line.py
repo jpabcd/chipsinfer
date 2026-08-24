@@ -86,7 +86,7 @@ def _build_product_args(
     auto_external_xy_csv: bool,
 ) -> list[str]:
     product_name = product_dir.name
-    output_json_path = product_output_dir / "json" / f"{product_name}.json"
+    output_json_path = product_output_dir / "json" / f"{product_name}.jsonl"
     predict_input_root = product_output_dir / "predict_input"
     product_args = [
         str(product_dir),
@@ -193,7 +193,7 @@ def _parse_args(argv: list[str] | None) -> tuple[argparse.Namespace, list[str]]:
         "--skip-completed",
         action=argparse.BooleanOptionalAction,
         default=defaults["skip_completed"],
-        help="Skip products with an existing per-product result JSON in OUTPUT_ROOT.",
+        help="Skip products with an existing per-product result JSONL in OUTPUT_ROOT.",
     )
     parser.add_argument(
         "--fail-fast", action=argparse.BooleanOptionalAction,
@@ -311,7 +311,7 @@ def main(argv: list[str] | None = None) -> None:
 
             product_name = product_dir.name
             product_output_dir = output_root / "products" / product_name
-            result_json_path = product_output_dir / "json" / f"{product_name}.json"
+            result_json_path = product_output_dir / "json" / f"{product_name}.jsonl"
             existing_record = summary["products"].get(product_name, {})
 
             if args.skip_completed and result_json_path.is_file():
@@ -319,8 +319,8 @@ def main(argv: list[str] | None = None) -> None:
                     summary["products"][product_name] = {
                         "status": "completed",
                         "product_dir": str(product_dir),
-                        "result_json": str(result_json_path),
-                        "message": "Skipped because a result JSON already exists.",
+                        "result_jsonl": str(result_json_path),
+                        "message": "Skipped because a result JSONL already exists.",
                     }
                     _write_summary(summary_path, summary)
                 continue
@@ -381,7 +381,7 @@ def main(argv: list[str] | None = None) -> None:
                 "status": "completed",
                 "product_dir": str(product_dir),
                 "output_dir": str(product_output_dir),
-                "result_json": str(result_json_path),
+                "result_jsonl": str(result_json_path),
                 "started_at": started_at,
                 "finished_at": datetime.now().isoformat(timespec="seconds"),
             }

@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-PYTHON_BIN="${PYTHON_BIN:-../../.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-.venv/Scripts/python.exe}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "Python interpreter is not executable: $PYTHON_BIN" >&2
   exit 1
@@ -18,20 +18,20 @@ WAFER_MAP_HEIGHT="${WAFER_MAP_HEIGHT:-16}"
 WAFER_MAP_CHIP_ASPECT="${WAFER_MAP_CHIP_ASPECT:-5.0}"
 
 CMD=(
-  "$PYTHON_BIN" run_pipeline.py ../../48AMA/imgs/S26G03085-10
+  "$PYTHON_BIN" run_pipeline.py E:\\AOI\\code2_archive\\48AMA\\20260819\\大图\\S26H04057-14
   --batch-size 2
   --num-workers 8
   --persistent-workers
   --prefetch-factor 2
   --light-read-workers 4
   #--no-save-predict-input
-  #--save-predict-input
+  --save-predict-input
   --output-dir "$OUTPUT_DIR"
-  --output-json "$OUTPUT_DIR/json/main_inferer_dataloader_results.json"
+  --output-json "$OUTPUT_DIR/json/S26H04057-14.jsonl"
   --predict-input-root "$OUTPUT_DIR/predict_input"
   --defect-report
-  --defect-report-path "$OUTPUT_DIR/csv/S26G03085-10.csv"
-  --external-xy-csv-path "../../48AMA/imgs/S26G03085-10/S26G03085-10.csv"
+  --defect-report-path "$OUTPUT_DIR/csv/S26H04057-14.csv"
+  --external-xy-csv-path "E:\\AOI\\code2_archive\\48AMA\\20260819\\大图\\S26H04057-14\\S26H04057-14.csv"
   --wafer-map-path "$OUTPUT_DIR/plots/wafer_map_overall.png"
   --wafer-map-figsize "$WAFER_MAP_WIDTH" "$WAFER_MAP_HEIGHT"
   --wafer-map-chip-aspect "$WAFER_MAP_CHIP_ASPECT"
