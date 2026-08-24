@@ -70,7 +70,7 @@
     },
     {
       "name": "light_4",
-      "weight": "./my_weights/20260821-134802-5b482e45-light4/output/train/weights/best.pt",
+      "weight": "./my_weights/20260824-144246-7c67d309-light4/output/train/weights/best.pt",
       "analyse": {
           "可忽略-曝点":{"enabled": false},
           "细线问题":{"enabled": false},

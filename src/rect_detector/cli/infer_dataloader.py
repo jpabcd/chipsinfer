@@ -24,6 +24,11 @@ from rect_detector.pipeline.dataloader_runner import (
 from rect_detector.raw_batch_datasetV2 import build_raw_batch_dataloader
 from rect_detector.yolo_inferers import CombinedYoloInferers
 
+try:
+    import orjson
+except ImportError:
+    orjson = None
+
 
 JSONL_WRITE_BATCH_SIZE = 16
 
@@ -44,6 +49,12 @@ def _default_yolo_config_path() -> Path:
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+def _serialize_jsonl_record(value: Any) -> bytes:
+    if orjson is not None:
+        return orjson.dumps(value, default=json_default, option=orjson.OPT_APPEND_NEWLINE)
+    return (json.dumps(value, ensure_ascii=False, default=json_default) + "\n").encode("utf-8")
 
 
 def main(
@@ -233,14 +244,14 @@ def main(
     skipped_errors_jsonl = output_jsonl.with_suffix(".skipped.jsonl")
     output_jsonl.parent.mkdir(parents=True, exist_ok=True)
 
-    with output_jsonl.open("w", encoding="utf-8") as samples_sink, skipped_errors_jsonl.open(
+    with output_jsonl.open("wb") as samples_sink, skipped_errors_jsonl.open(
         "w", encoding="utf-8"
     ) as skipped_sink:
-        sample_jsonl_buffer: list[str] = []
+        sample_jsonl_buffer: list[bytes] = []
 
         def flush_sample_jsonl_buffer() -> None:
             if sample_jsonl_buffer:
-                samples_sink.write("".join(sample_jsonl_buffer))
+                samples_sink.write(b"".join(sample_jsonl_buffer))
                 sample_jsonl_buffer.clear()
 
         for batch_index, batch in enumerate(dataloader):
@@ -323,12 +334,8 @@ def main(
                     save_predict_input=args.save_predict_input,
                     workspace_root=workspace_root,
                 )
-                serialized_record = json.dumps(
-                    sample_record,
-                    ensure_ascii=False,
-                    default=json_default,
-                )
-                sample_jsonl_buffer.append(serialized_record + "\n")
+                serialized_record = _serialize_jsonl_record(sample_record)
+                sample_jsonl_buffer.append(serialized_record)
                 if len(sample_jsonl_buffer) >= JSONL_WRITE_BATCH_SIZE:
                     flush_sample_jsonl_buffer()
                 del serialized_record, sample_record
