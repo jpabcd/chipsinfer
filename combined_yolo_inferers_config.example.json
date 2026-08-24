@@ -8,7 +8,7 @@
         "可忽略-曝点":{"enabled": false}
 
       },
-        "crop_width": 795,
+        "crop_width": 832,
         "crop_height": 170,
         "conf": 0.35,
         "iou": 0.7,
@@ -31,7 +31,7 @@
         "中间线":{"enabled": false},
         "人工类 4":{"enabled": false}
       },
-        "crop_width": 795,
+        "crop_width": 832,
         "crop_height": 170,
         "conf": 0.35,
         "iou": 0.7,
@@ -54,7 +54,7 @@
           "线条问题":{"width": {">": 120}},
           "电极污染": {"confidence": {">": 0.4}}
       },
-        "crop_width": 795,
+        "crop_width": 832,
         "crop_height": 170,
         "conf": 0.35,
         "iou": 0.7,
@@ -76,7 +76,7 @@
           "细线问题":{"enabled": false},
           "轻微灰斑":{"enabled": false}
         },
-          "crop_width": 795,
+          "crop_width": 832,
           "crop_height": 170,
           "conf": 0.35,
           "iou": 0.7,
