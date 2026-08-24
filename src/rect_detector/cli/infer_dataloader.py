@@ -25,6 +25,9 @@ from rect_detector.raw_batch_datasetV2 import build_raw_batch_dataloader
 from rect_detector.yolo_inferers import CombinedYoloInferers
 
 
+JSONL_WRITE_BATCH_SIZE = 16
+
+
 def _default_yolo_config_path() -> Path:
     config_name = "combined_yolo_inferers_config.example.json"
     module_path = Path(__file__).resolve()
@@ -233,6 +236,13 @@ def main(
     with output_jsonl.open("w", encoding="utf-8") as samples_sink, skipped_errors_jsonl.open(
         "w", encoding="utf-8"
     ) as skipped_sink:
+        sample_jsonl_buffer: list[str] = []
+
+        def flush_sample_jsonl_buffer() -> None:
+            if sample_jsonl_buffer:
+                samples_sink.write("".join(sample_jsonl_buffer))
+                sample_jsonl_buffer.clear()
+
         for batch_index, batch in enumerate(dataloader):
             if args.max_batches > 0 and batch_index >= args.max_batches:
                 break
@@ -318,9 +328,9 @@ def main(
                     ensure_ascii=False,
                     default=json_default,
                 )
-                samples_sink.write(
-                    serialized_record + "\n"
-                )
+                sample_jsonl_buffer.append(serialized_record + "\n")
+                if len(sample_jsonl_buffer) >= JSONL_WRITE_BATCH_SIZE:
+                    flush_sample_jsonl_buffer()
                 del serialized_record, sample_record
 
             if args.max_samples > 0 and total_samples_inferred >= args.max_samples:
@@ -331,6 +341,8 @@ def main(
             del valid_sample_ids, valid_num_strs
             del sample_ids, num_strs, rect_input_imgs, mechanical_infos_batch, light_image_batches
             del batch
+
+            flush_sample_jsonl_buffer()
 
     run_elapsed = perf_counter() - run_start
 
