@@ -16,16 +16,19 @@ OUTPUT_DIR="${OUTPUT_DIR:-outputs/run_$(date +%Y%m%d_%H%M%S)}"
 WAFER_MAP_WIDTH="${WAFER_MAP_WIDTH:-20}"
 WAFER_MAP_HEIGHT="${WAFER_MAP_HEIGHT:-16}"
 WAFER_MAP_CHIP_ASPECT="${WAFER_MAP_CHIP_ASPECT:-5.0}"
+BATCH_SIZE="${BATCH_SIZE:-2}"
+NUM_WORKERS="${NUM_WORKERS:-1}"
+PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
+LIGHT_READ_WORKERS="${LIGHT_READ_WORKERS:-2}"
+SAVE_PREDICT_INPUT="${SAVE_PREDICT_INPUT:-false}"
 
 CMD=(
   "$PYTHON_BIN" run_pipeline.py E:\\AOI\\code2_archive\\48AMA\\20260819\\大图\\S26H04057-14
-  --batch-size 2
-  --num-workers 8
-  --persistent-workers
-  --prefetch-factor 2
-  --light-read-workers 4
-  #--no-save-predict-input
-  --save-predict-input
+  --batch-size "$BATCH_SIZE"
+  --num-workers "$NUM_WORKERS"
+  --no-persistent-workers
+  --prefetch-factor "$PREFETCH_FACTOR"
+  --light-read-workers "$LIGHT_READ_WORKERS"
   --output-dir "$OUTPUT_DIR"
   --output-json "$OUTPUT_DIR/json/S26H04057-14.jsonl"
   --predict-input-root "$OUTPUT_DIR/predict_input"
@@ -36,6 +39,12 @@ CMD=(
   --wafer-map-figsize "$WAFER_MAP_WIDTH" "$WAFER_MAP_HEIGHT"
   --wafer-map-chip-aspect "$WAFER_MAP_CHIP_ASPECT"
 )
+
+if [[ "$SAVE_PREDICT_INPUT" == "true" ]]; then
+  CMD+=(--save-predict-input)
+else
+  CMD+=(--no-save-predict-input)
+fi
 
 # 允许额外参数透传，例如：
 #   ./run_pipeline_product.sh --save-predict-input --save-predict-input-on-any-light-ng
