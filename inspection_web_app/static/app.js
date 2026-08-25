@@ -10,6 +10,7 @@ const controls = {
   modelPredictionFilter: document.querySelector("#modelPredictionFilter"),
   keyword: document.querySelector("#keyword"),
   imageSearch: document.querySelector("#imageSearch"),
+  predictionClassFilter: document.querySelector("#predictionClassFilter"),
   numCol: document.querySelector("#numCol"),
   numRow: document.querySelector("#numRow"),
   scaleRatio: document.querySelector("#scaleRatio"),
@@ -48,6 +49,9 @@ const waferMapEls = {
   status: document.querySelector("#waferMapStatus"),
   toggle: document.querySelector("#waferMapToggle"),
   finalStatus: document.querySelector("#waferFinalStatus"),
+  baseCsv: document.querySelector("#waferBaseCsv"),
+  compare: document.querySelector("#compareWaferMap"),
+  clearComparison: document.querySelector("#clearWaferComparison"),
   clearChipFilter: document.querySelector("#clearChipFilter"),
   panel: document.querySelector(".wafer-map-panel"),
 };
@@ -72,6 +76,7 @@ let waferMapState = {
   visibleIndices: [],
   sourceKey: "",
   collapsed: false,
+  comparisonBaseCsv: "",
 };
 let chipFilter = {
   mx: "",
@@ -452,6 +457,7 @@ function getParams() {
     model_prediction: controls.modelPredictionFilter.value,
     keyword: controls.keyword.value.trim(),
     image_search: controls.imageSearch.value.trim(),
+    prediction_class: controls.predictionClassFilter?.value.trim() || "",
     num_col: String(safeNumCol),
     num_row: String(safeNumRow),
     scale_ratio: controls.scaleRatio.value,
@@ -461,6 +467,7 @@ function getParams() {
     confusion_cell: confusionFilter.cell,
     confusion_light: confusionFilter.light,
     final_status: waferMapEls.finalStatus?.value || "All",
+    base_csv: waferMapState.comparisonBaseCsv,
     chip_mx: chipFilter.mx,
     chip_my: chipFilter.my,
     page: controls.page.value || "1",
@@ -765,6 +772,23 @@ function findAdjacentChip(direction) {
   return bestIndex;
 }
 
+function chipMatchesWaferFilter(chip, finalStatus) {
+  if (finalStatus === "CONFLICT") return Boolean(chip.conflict);
+  if (finalStatus === "CONFLICT_OK" || finalStatus === "CONFLICT_NG") {
+    return chip.conflictType === finalStatus;
+  }
+  return finalStatus === "ALL" || String(chip.status || "").toUpperCase() === finalStatus;
+}
+
+function waferChipColor(chip) {
+  if (chip.conflictType === "CONFLICT_OK") return "#fde047";
+  if (chip.conflictType === "CONFLICT_NG") return "#ca8a04";
+  const status = String(chip.status || "").toUpperCase();
+  if (status === "NG") return "#ef4444";
+  if (status === "OK") return "#22c55e";
+  return "#f59e0b";
+}
+
 function drawWaferMapPoints() {
   if (!waferMapEls.canvas) return;
   const canvas = waferMapEls.canvas;
@@ -812,7 +836,7 @@ function drawWaferMapPoints() {
   const validChips = chips.filter((chip) => (
     Number.isFinite(chip.x)
     && Number.isFinite(chip.y)
-    && (finalStatus === "ALL" || String(chip.status || "").toUpperCase() === finalStatus)
+    && chipMatchesWaferFilter(chip, finalStatus)
   ));
   const validX = validChips.map((chip) => chip.x);
   const validY = validChips.map((chip) => chip.y);
@@ -842,6 +866,8 @@ function drawWaferMapPoints() {
     NG: new Path2D(),
     OK: new Path2D(),
     UNKNOWN: new Path2D(),
+    CONFLICT_OK: new Path2D(),
+    CONFLICT_NG: new Path2D(),
   };
   let selectedPoint = null;
   // Draw every chip as its physical rectangular cell. Fixed-size circles
@@ -851,14 +877,14 @@ function drawWaferMapPoints() {
 
   chips.forEach((chip, index) => {
     if (!Number.isFinite(chip.x) || !Number.isFinite(chip.y)) return;
-    if (finalStatus !== "ALL" && String(chip.status || "").toUpperCase() !== finalStatus) return;
+    if (!chipMatchesWaferFilter(chip, finalStatus)) return;
     const x = centerX + (chip.x - (minX + maxX) / 2) * chipAspect * mapScale;
     const y = centerY + (chip.y - (minY + maxY) / 2) * mapScale;
     chip.pixelX = x;
     chip.pixelY = y;
     visibleIndices.push(index);
 
-    const chipStatus = String(chip.status || "").toUpperCase();
+    const chipStatus = chip.conflictType || String(chip.status || "").toUpperCase();
     if (index === waferMapState.selectedIndex) {
       selectedPoint = { x, y, status: chipStatus };
       return;
@@ -873,8 +899,13 @@ function drawWaferMapPoints() {
   ctx.fill(pointPaths.OK);
   ctx.fillStyle = "#f59e0b";
   ctx.fill(pointPaths.UNKNOWN);
+  ctx.fillStyle = "#fde047";
+  ctx.fill(pointPaths.CONFLICT_OK);
+  ctx.fillStyle = "#ca8a04";
+  ctx.fill(pointPaths.CONFLICT_NG);
   if (selectedPoint) {
-    ctx.fillStyle = selectedPoint.status === "NG" ? "#ef4444" : selectedPoint.status === "OK" ? "#22c55e" : "#f59e0b";
+    const selectedChip = chips[waferMapState.selectedIndex];
+    ctx.fillStyle = waferChipColor(selectedChip || { status: selectedPoint.status });
     ctx.beginPath();
     ctx.arc(selectedPoint.x, selectedPoint.y, 7, 0, Math.PI * 2);
     ctx.fill();
@@ -909,6 +940,7 @@ function waferMapSourceKey() {
   return [
     controls.resultJson?.value.trim() || "",
     controls.projectDir?.value.trim() || "",
+    waferMapState.comparisonBaseCsv,
   ].join("\u0000");
 }
 
@@ -925,11 +957,14 @@ function renderWaferMapData(data) {
   if (waferMapEls.status) {
     if (data.chipCount) {
       const mapStatus = waferMapEls.finalStatus?.value || "All";
-      const visibleCount = mapStatus === "All"
-        ? data.chipCount
-        : waferMapState.chips.filter((chip) => chip.status === mapStatus).length;
+      const visibleCount = waferMapState.chips.filter((chip) => (
+        chipMatchesWaferFilter(chip, String(mapStatus).toUpperCase())
+      )).length;
       const chipHint = hasChipFilter() ? ` | 已定位 chip (${chipFilter.mx}, ${chipFilter.my})` : "";
-      waferMapEls.status.textContent = `显示 ${visibleCount} / ${data.chipCount || 0} 个 chip${chipHint}`;
+      const conflictHint = data.comparison?.baseCsv
+        ? ` | 冲突 ${data.comparison.conflictCount || 0} 个（当前 OK：${data.comparison.conflictOkCount || 0}，当前 NG：${data.comparison.conflictNgCount || 0}）`
+        : "";
+      waferMapEls.status.textContent = `显示 ${visibleCount} / ${data.chipCount || 0} 个 chip${conflictHint}${chipHint}`;
     } else {
       waferMapEls.status.textContent = "当前结果 JSON 未生成可用 chip 坐标";
     }
@@ -938,7 +973,7 @@ function renderWaferMapData(data) {
   drawWaferMapPoints();
 }
 
-async function loadWaferMap() {
+async function loadWaferMap({ force = false } = {}) {
   const currentResultJson = controls.resultJson?.value.trim() || "";
   if (!currentResultJson) {
     waferMapState.chips = [];
@@ -952,7 +987,7 @@ async function loadWaferMap() {
   }
 
   const sourceKey = waferMapSourceKey();
-  if (waferMapState.sourceKey === sourceKey && waferMapState.chips.length) {
+  if (!force && waferMapState.sourceKey === sourceKey && waferMapState.chips.length) {
     renderWaferMapData({
       productName: currentResultJson.split("/").pop() || "",
       chipCount: waferMapState.chips.length,
@@ -965,6 +1000,7 @@ async function loadWaferMap() {
     const params = new URLSearchParams({
       result_json: currentResultJson,
       project_dir: controls.projectDir?.value.trim() || "",
+      base_csv: waferMapState.comparisonBaseCsv,
     });
     const response = await fetch(`/api/wafer-map?${params.toString()}`);
     const data = await response.json();
@@ -994,6 +1030,36 @@ if (waferMapEls.finalStatus) {
     // gallery request then applies the same final-result constraint to images.
     drawWaferMapPoints();
     loadImages();
+  });
+}
+
+if (waferMapEls.compare) {
+  waferMapEls.compare.addEventListener("click", async () => {
+    const baseCsv = waferMapEls.baseCsv?.value.trim() || "";
+    if (!baseCsv) {
+      setStatus("请先输入基准 CSV 路径。", true);
+      return;
+    }
+    waferMapState.comparisonBaseCsv = baseCsv;
+    waferMapState.sourceKey = "";
+    try {
+      await loadWaferMap({ force: true });
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  });
+}
+
+if (waferMapEls.clearComparison) {
+  waferMapEls.clearComparison.addEventListener("click", async () => {
+    waferMapState.comparisonBaseCsv = "";
+    waferMapState.sourceKey = "";
+    if (waferMapEls.baseCsv) waferMapEls.baseCsv.value = "";
+    if (waferMapEls.finalStatus?.value?.startsWith("CONFLICT")) {
+      waferMapEls.finalStatus.value = "All";
+    }
+    controls.page.value = "1";
+    await loadImages();
   });
 }
 
@@ -1091,10 +1157,13 @@ async function loadImages() {
     const shuffleText = data.shuffle ? ` | 当前页 Shuffle 开启` : " | 当前页 Shuffle 关闭";
     const jsonFirstText = data.jsonFirst ? " | 当前页 JSON优先" : "";
     const searchText = data.imageSearch ? ` | 查找：${data.imageSearch}` : "";
+    const predictionClassText = controls.predictionClassFilter?.value.trim()
+      ? ` | 预测类别：${controls.predictionClassFilter.value.trim()}`
+      : "";
     const modelFilterText = data.modelPredictionFilter && data.modelPredictionFilter !== "All" ? ` | 模型判定：${data.modelPredictionFilter}` : "";
     const matrixFilterText = data.confusionCell ? ` | 矩阵筛选：${data.confusionLight || "全部 light"} / ${data.confusionCell}` : "";
     const cacheText = data.cacheCleared ? " | 已清理推理缓存" : "";
-    setStatus(`状态：总计 ${data.total} 张 | 当前第 ${data.page} / ${data.totalPages} 页 | 当前 Batch 分辨率 ${data.batchWidth}x${data.batchHeight}${shuffleText}${jsonFirstText}${modelFilterText}${searchText}${matrixFilterText}${cacheText} | 数据源 ${data.baseDir || "-"}`);
+    setStatus(`状态：总计 ${data.total} 张 | 当前第 ${data.page} / ${data.totalPages} 页 | 当前 Batch 分辨率 ${data.batchWidth}x${data.batchHeight}${shuffleText}${jsonFirstText}${modelFilterText}${searchText}${predictionClassText}${matrixFilterText}${cacheText} | 数据源 ${data.baseDir || "-"}`);
     // Build the whole page off-DOM, then attach it once to avoid repeated
     // layout/repaint work when a page contains many cards.
     const fragment = document.createDocumentFragment();
@@ -1161,6 +1230,7 @@ function renderCard(item, container = gallery) {
       : (Array.isArray(item?.predictionOverlay?.detection) ? item.predictionOverlay.detection.map((region) => ({ ...region })) : []),
     inferenceRemovedRegions: Array.isArray(annotation.inferenceRemovedRegions) ? annotation.inferenceRemovedRegions.map((region) => ({ ...region })) : [],
     inferenceRegions: [],
+    predictionBoxesVisible: true,
     detectionIssues: annotation.detectionIssues,
     missRegions: annotation.missRegions,
     falseRegions: annotation.falseRegions,
@@ -1200,6 +1270,7 @@ function renderCard(item, container = gallery) {
   }
   const qualityState = node.querySelector(".image-quality-state");
   const loadOriginalButton = node.querySelector(".load-original-btn");
+  const togglePredictionBoxesButton = node.querySelector(".toggle-prediction-boxes-btn");
   const thumbnailUrl = item.thumbnailUrl || item.imageUrl;
   img.loading = "lazy";
   img.decoding = "async";
@@ -1237,6 +1308,16 @@ function renderCard(item, container = gallery) {
       loadOriginalButton.textContent = "正在加载原图...";
       if (qualityState) qualityState.textContent = "正在切换原图";
       img.src = item.imageUrl;
+    });
+  }
+  if (togglePredictionBoxesButton) {
+    togglePredictionBoxesButton.addEventListener("click", () => {
+      state.predictionBoxesVisible = !state.predictionBoxesVisible;
+      togglePredictionBoxesButton.textContent = state.predictionBoxesVisible
+        ? "隐藏推理框"
+        : "显示推理框";
+      togglePredictionBoxesButton.setAttribute("aria-pressed", String(state.predictionBoxesVisible));
+      drawRegions(canvas, state);
     });
   }
   node.querySelectorAll("[data-verdict]").forEach((button) => {
@@ -1605,7 +1686,9 @@ function drawRegions(canvas, state) {
   ctx.save();
   ctx.scale(dpr, dpr);
 
-  drawPredictionOverlay(ctx, canvas, state);
+  if (state.predictionBoxesVisible) {
+    drawPredictionOverlay(ctx, canvas, state);
+  }
 
   drawRegionGroup(ctx, canvas, state, state.missRegions, "#b42318", "rgba(180, 35, 24, 0.12)");
   drawRegionGroup(ctx, canvas, state, state.falseRegions, "#1f7a8c", "rgba(31, 122, 140, 0.12)");
@@ -1828,6 +1911,7 @@ if (statsEls.refresh) {
   controls.lightType,
   controls.keyword,
   controls.imageSearch,
+  controls.predictionClassFilter,
   controls.numCol,
   controls.numRow,
   controls.scaleRatio,

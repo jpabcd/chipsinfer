@@ -78,6 +78,10 @@
         查找图片
         <input id="imageSearch" type="text" placeholder="文件名 / 路径 / 备注">
       </label>
+      <label title="输入模型检测框中的类别名；只显示任一推理框类别包含该文字的图片">
+        预测类别筛选
+        <input id="predictionClassFilter" type="text" placeholder="例如：scratch">
+      </label>
       <label>
         列数
         <input id="numCol" type="number" value="4" min="1" max="12" title="列数过大时会导致浏览器卡顿，已限制为安全范围">
@@ -117,8 +121,17 @@
               <option value="All">全部</option>
               <option value="NG">NG</option>
               <option value="OK">OK</option>
+              <option value="CONFLICT">全部冲突</option>
+              <option value="CONFLICT_OK">冲突：当前 OK / 基准 NG</option>
+              <option value="CONFLICT_NG">冲突：当前 NG / 基准 OK</option>
             </select>
           </label>
+          <label class="wafer-map-base-csv">
+            基准 CSV
+            <input id="waferBaseCsv" type="text" placeholder="例如：D:/reports/base.csv">
+          </label>
+          <button id="compareWaferMap" type="button" class="wafer-map-compare">比较</button>
+          <button id="clearWaferComparison" type="button" class="wafer-map-clear">清除比较</button>
           <button id="clearChipFilter" type="button" class="wafer-map-clear" disabled>清除 chip 定位</button>
           <span id="waferMapStatus">等待加载结果 JSON。</span>
           <button id="waferMapToggle" type="button" class="wafer-map-toggle" aria-expanded="true">收起</button>
@@ -242,7 +255,10 @@
       <div class="review-panel">
         <div class="image-quality-row">
           <span class="image-quality-state">缩略图</span>
-          <button type="button" class="load-original-btn">加载原图</button>
+          <div class="image-quality-actions">
+            <button type="button" class="load-original-btn">加载原图</button>
+            <button type="button" class="toggle-prediction-boxes-btn" aria-pressed="true" title="隐藏或显示此图片的模型推理框和文字">隐藏推理框</button>
+          </div>
         </div>
         <div class="model-prediction">模型判定为：<strong data-model-prediction></strong></div>
         <div class="review-title">对分类结果做人工打标</div>
