@@ -1,7 +1,7 @@
 {
   "paths": {
     "imgs_root": "../data/20260806/大图",
-    "output_root": "outputs/48AMA_line_0821_batchidx",
+    "output_root": "outputs/48AMA_line_0821_batchidx_3",
     "summary_json": null
   },
   "line": {
@@ -17,7 +17,7 @@
   },
   "inference": {
     "batch_size": 2,
-    "num_workers": 4,
+    "num_workers": 2,
     "persistent_workers": false,
     "prefetch_factor": 2,
     "light_read_workers": 4,

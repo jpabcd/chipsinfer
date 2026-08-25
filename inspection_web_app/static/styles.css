@@ -278,6 +278,29 @@ textarea {
   padding: 5px 8px;
 }
 
+.wafer-map-base-csv {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.wafer-map-base-csv input {
+  min-width: min(300px, 42vw);
+  padding: 5px 8px;
+}
+
+.wafer-map-compare {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #92400e;
+  font-weight: 700;
+  min-height: 32px;
+  padding: 5px 10px;
+}
+
 .wafer-map-clear {
   background: #f3f5f8;
   border: 1px solid var(--line);
@@ -881,6 +904,11 @@ textarea {
   font-weight: 700;
 }
 
+.image-quality-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .load-original-btn {
   background: #f3f5f8;
   border: 1px solid var(--line);
@@ -888,6 +916,21 @@ textarea {
   font-size: 12px;
   min-height: 30px;
   padding: 4px 9px;
+}
+
+.toggle-prediction-boxes-btn {
+  background: #f3f5f8;
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 12px;
+  min-height: 30px;
+  padding: 4px 9px;
+}
+
+.toggle-prediction-boxes-btn[aria-pressed="false"] {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #9a3412;
 }
 
 .load-original-btn:disabled {

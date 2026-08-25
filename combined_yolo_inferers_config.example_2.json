@@ -1,0 +1,94 @@
+{
+  "lights": [
+    {
+      "name": "light_1",
+      "weight": "./my_weights/20260810-101202-f14b543b-light1/output/train/weights/best.pt",
+      "analyse": {
+        "中间线":{"enabled": false},
+        "可忽略-曝点":{"enabled": false}
+
+      },
+        "crop_width": 832,
+        "crop_height": 170,
+        "conf": 0.3,
+        "iou": 0.7,
+        "imgsz": 320,
+        "device": "0",
+        "quantize": 16,
+        "use_engine": true,
+        "yolo_batch": 256,
+        "yolo_stream": true,
+        "yolo_stream_batch": 128,
+        "yolo_warmup": 100,
+        "verbose": false
+    },
+    {
+      "name": "light_2",
+      "weight": "./my_weights/20260814-132731-816ded8b-light2/output/train/weights/best.pt",
+      "analyse": {
+        "可忽略-曝点":{"enabled": false},
+        "可忽略-线条":{"enabled": false},
+        "中间线":{"enabled": false},
+        "人工类 4":{"enabled": false}
+      },
+        "crop_width": 832,
+        "crop_height": 170,
+        "conf": 0.3,
+        "iou": 0.7,
+        "imgsz": 320,
+        "device": "0",
+        "quantize": 16,
+        "use_engine": true,
+        "yolo_batch": 256,
+        "yolo_stream": true,
+        "yolo_stream_batch": 128,
+        "yolo_warmup": 100,
+        "verbose": false
+    },
+    {
+      "name": "light_3",
+      "weight": "./my_weights/20260819-194358-ece09790-light3/output/train/weights/best.pt",
+      "analyse": {
+          "中间线": {"enabled": false},
+          "可忽略-曝点":{"enabled": false},
+          "线条问题":{"width": {">": 120}},
+          "电极污染": {"confidence": {">": 0.4}}
+      },
+        "crop_width": 832,
+        "crop_height": 170,
+        "conf": 0.3,
+        "iou": 0.7,
+        "imgsz": 320,
+        "device": "0",
+        "quantize": 16,
+        "use_engine": true,
+        "yolo_batch": 256,
+        "yolo_stream": true,
+        "yolo_stream_batch": 128,
+        "yolo_warmup": 100,
+        "verbose": false
+    },
+    {
+      "name": "light_4",
+      "weight": "./my_weights/20260824-144246-7c67d309-light4/output/train/weights/best.pt",
+      "analyse": {
+          "可忽略-曝点":{"enabled": false},
+          "细线问题":{"enabled": false},
+          "轻微灰斑":{"enabled": false}
+        },
+          "crop_width": 832,
+          "crop_height": 170,
+          "conf": 0.3,
+          "iou": 0.7,
+          "imgsz": 320,
+          "device": "0",
+          "quantize": 16,
+          "use_engine": true,
+          "yolo_batch": 256,
+          "yolo_stream": true,
+          "yolo_stream_batch": 128,
+          "yolo_warmup": 100,
+            "verbose": false
+    }
+  ]
+}

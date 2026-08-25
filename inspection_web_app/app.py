@@ -47,6 +47,7 @@ INFERENCE_BASE_CACHE = {}
 INFERENCE_BASE_LOADING = {}
 INFERENCE_SHUFFLE_CACHE = {}
 WAFER_MAP_CACHE = {}
+BASE_CSV_STATUS_CACHE = {}
 INFERENCE_CACHE_LOCK = threading.RLock()
 ANNOTATION_WRITE_LOCK = threading.RLock()
 PROJECT_DIR = APP_DIR.parent
@@ -67,6 +68,7 @@ def clear_inference_runtime_cache(clear_disk_cache=False):
         INFERENCE_BASE_CACHE.clear()
         INFERENCE_SHUFFLE_CACHE.clear()
         WAFER_MAP_CACHE.clear()
+        BASE_CSV_STATUS_CACHE.clear()
 
     removed_disk_files = 0
     if clear_disk_cache and INFERENCE_DISK_CACHE_DIR.exists():
@@ -474,6 +476,7 @@ def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
                 except (TypeError, ValueError):
                     map_mx = None
                     map_my = None
+                compact_raw = compact_raw_output(raw)
                 items.append({
                     "id": quote(original_path, safe=""),
                     "name": image_path.name,
@@ -495,8 +498,13 @@ def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
                     "mapMy": map_my,
                     "finalStatus": str((chip.get("final") or {}).get("status", "UNKNOWN")).upper(),
                     "predictionOverlay": {"detection": [], "analyse": []},
+                    "predictionClasses": tuple(
+                        str(detection.get("class_name", ""))
+                        for detection in (compact_raw.get("detections") or [])
+                        if str(detection.get("class_name", "")).strip()
+                    ),
                     "_searchText": searchable,
-                    "_rawOutput": compact_raw_output(raw),
+                    "_rawOutput": compact_raw,
                     "_analysedOutput": analysed,
                 })
 
@@ -521,7 +529,7 @@ def _build_inference_base_items(result_json_path, project_dir, stamp, base_key):
 def _load_inference_base_items(result_json_path, project_dir, stamp):
     """Load one base list while making concurrent requests share the same build."""
     result_json_path = resolve_user_supplied_path(result_json_path)
-    base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v5")
+    base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v6")
     with INFERENCE_CACHE_LOCK:
         cached = INFERENCE_BASE_CACHE.get(base_key)
         if cached is not None:
@@ -580,7 +588,15 @@ def get_shuffled_items_cached(items, shuffle_seed):
     return shuffled
 
 
-def load_inference_items(result_json_path, light_type, model_prediction_filter, keyword, image_search, project_dir=None):
+def load_inference_items(
+    result_json_path,
+    light_type,
+    model_prediction_filter,
+    keyword,
+    image_search,
+    prediction_class="",
+    project_dir=None,
+):
     result_json_path = resolve_user_supplied_path(result_json_path)
     try:
         stat = result_json_path.stat()
@@ -589,13 +605,14 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
         stamp = None
 
     cache_key = (
-        "filtered-v4",
+        "filtered-v5",
         str(result_json_path),
         stamp,
         light_type,
         model_prediction_filter,
         (keyword or "").lower(),
         (image_search or "").lower(),
+        (prediction_class or "").lower(),
         str(project_dir or ""),
     )
     cached = INFERENCE_ITEMS_CACHE.get(cache_key)
@@ -618,8 +635,9 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
                 and model_prediction_filter == "All"
                 and not keyword
                 and not image_search
+                and not prediction_class
             ):
-                base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v5")
+                base_key = (str(result_json_path), stamp, str(project_dir or ""), "base-v6")
                 with INFERENCE_CACHE_LOCK:
                     INFERENCE_BASE_CACHE[base_key] = cached
             return cached
@@ -628,6 +646,7 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
 
     keyword_lower = (keyword or "").lower()
     search_lower = (image_search or "").lower()
+    prediction_class_lower = (prediction_class or "").strip().lower()
     base_items = _load_inference_base_items(result_json_path, project_dir, stamp)
     items = []
     for base_item in base_items:
@@ -638,6 +657,11 @@ def load_inference_items(result_json_path, light_type, model_prediction_filter, 
         if keyword_lower and keyword_lower not in base_item.get("name", "").lower():
             continue
         if search_lower and search_lower not in base_item.get("_searchText", ""):
+            continue
+        if prediction_class_lower and not any(
+            prediction_class_lower in str(class_name).lower()
+            for class_name in base_item.get("predictionClasses", ())
+        ):
             continue
         items.append(base_item)
 
@@ -1027,6 +1051,7 @@ def build_inference_detection_region_index(result_json_path, project_dir=None):
         model_prediction_filter="All",
         keyword="",
         image_search="",
+        prediction_class="",
         project_dir=project_dir,
     )
     indexed = {}
@@ -1246,6 +1271,91 @@ def _read_wafer_map_coordinates(csv_path):
     return coordinates
 
 
+def _normalize_comparison_status(value):
+    """Normalize common defect-report values to the final OK/NG states."""
+    normalized = str(value or "").strip().upper()
+    if normalized in {"NG", "FAIL", "DEFECT", "1", "TRUE"}:
+        return "NG"
+    if normalized in {"OK", "PASS", "GOOD", "0", "FALSE"}:
+        return "OK"
+    return ""
+
+
+def _read_base_csv_statuses(csv_path):
+    """Return {(MX, MY): OK|NG} from a defect-report CSV."""
+    try:
+        with csv_path.open("r", encoding="utf-8-sig", newline="") as file:
+            reader = csv.DictReader(file)
+            field_names = reader.fieldnames or []
+            columns = {str(name).strip().lower(): name for name in field_names}
+            missing = [name for name in ("mx", "my") if name not in columns]
+            if missing:
+                raise ValueError(
+                    "基准 CSV 缺少必需列：" + ", ".join(name.upper() for name in missing)
+                )
+            status_column = next(
+                (
+                    columns[name]
+                    for name in ("overall", "final_status", "final", "status", "result", "bin")
+                    if name in columns
+                ),
+                None,
+            )
+            if status_column is None:
+                raise ValueError(
+                    "基准 CSV 缺少结果列；请提供 overall、final_status、status、result 或 Bin。"
+                )
+
+            statuses = {}
+            for row in reader:
+                try:
+                    mx = int(float(row.get(columns["mx"], "")))
+                    my = int(float(row.get(columns["my"], "")))
+                except (TypeError, ValueError):
+                    continue
+                status = _normalize_comparison_status(row.get(status_column, ""))
+                if status:
+                    statuses[(mx, my)] = status
+    except (OSError, UnicodeDecodeError, csv.Error) as error:
+        raise ValueError(f"无法读取基准 CSV：{error}") from error
+
+    if not statuses:
+        raise ValueError("基准 CSV 中没有可用的 MX、MY 与 OK/NG 结果记录。")
+    return statuses
+
+
+def load_base_csv_statuses(base_csv_value):
+    """Resolve and cache the OK/NG lookup for a user-selected base CSV."""
+    base_csv_path = resolve_user_supplied_path(base_csv_value)
+    if not base_csv_path.is_file():
+        raise FileNotFoundError(f"基准 CSV 不存在：{base_csv_path}")
+    stat = base_csv_path.stat()
+    cache_key = str(base_csv_path)
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    with INFERENCE_CACHE_LOCK:
+        cached = BASE_CSV_STATUS_CACHE.get(cache_key)
+    if cached and cached.get("stamp") == stamp:
+        return cached["statuses"], base_csv_path
+
+    statuses = _read_base_csv_statuses(base_csv_path)
+    with INFERENCE_CACHE_LOCK:
+        BASE_CSV_STATUS_CACHE[cache_key] = {"stamp": stamp, "statuses": statuses}
+    return statuses, base_csv_path
+
+
+def is_mapping_conflict(current_status, base_status):
+    return bool(mapping_conflict_type(current_status, base_status))
+
+
+def mapping_conflict_type(current_status, base_status):
+    """Identify which side of an OK/NG base comparison disagrees."""
+    if current_status == "OK" and base_status == "NG":
+        return "CONFLICT_OK"
+    if current_status == "NG" and base_status == "OK":
+        return "CONFLICT_NG"
+    return ""
+
+
 class InspectionHandler(BaseHTTPRequestHandler):
     server_version = "InspectionWeb/1.0"
 
@@ -1330,6 +1440,7 @@ class InspectionHandler(BaseHTTPRequestHandler):
 
     def handle_wafer_map(self, query):
         result_json = query.get("result_json", [""])[0].strip() or CONFIGURED_RESULT_JSON
+        base_csv = query.get("base_csv", [""])[0].strip()
         if not result_json:
             self.send_json({"error": "请先指定推理结果 JSON。"}, HTTPStatus.BAD_REQUEST)
             return
@@ -1342,6 +1453,15 @@ class InspectionHandler(BaseHTTPRequestHandler):
             self.send_json({"error": f"读取 wafer map 数据失败：{error}"}, HTTPStatus.BAD_REQUEST)
             return
 
+        base_statuses = {}
+        base_csv_path = None
+        if base_csv:
+            try:
+                base_statuses, base_csv_path = load_base_csv_statuses(base_csv)
+            except (OSError, ValueError) as error:
+                self.send_json({"error": f"读取基准 CSV 失败：{error}"}, HTTPStatus.BAD_REQUEST)
+                return
+
         product_dir = result_json_path.parent.parent
         csv_path = (product_dir / "csv" / f"{result_json_path.stem}.csv").resolve()
         try:
@@ -1350,6 +1470,9 @@ class InspectionHandler(BaseHTTPRequestHandler):
                 result_json_path.stat().st_mtime_ns,
                 result_json_path.stat().st_size,
                 csv_path.stat().st_mtime_ns if csv_path.is_file() else None,
+                str(base_csv_path) if base_csv_path else None,
+                base_csv_path.stat().st_mtime_ns if base_csv_path else None,
+                base_csv_path.stat().st_size if base_csv_path else None,
             )
         except OSError as error:
             self.send_json({"error": f"读取 wafer map 数据失败：{error}"}, HTTPStatus.BAD_REQUEST)
@@ -1386,18 +1509,33 @@ class InspectionHandler(BaseHTTPRequestHandler):
                 coord = coordinate_index.get((mx_int, my_int), {})
                 x_value = coord.get("x")
                 y_value = coord.get("y")
+                current_status = str((chip.get("final") or {}).get("status", "UNKNOWN")).upper()
+                base_status = base_statuses.get((mx_int, my_int), "")
+                conflict_type = mapping_conflict_type(current_status, base_status)
                 chip_records.append({
                     "mx": mx_int,
                     "my": my_int,
                     "x": x_value,
                     "y": y_value,
-                    "status": str((chip.get("final") or {}).get("status", "UNKNOWN")).upper(),
+                    "status": current_status,
+                    "baseStatus": base_status or None,
+                    "conflict": bool(conflict_type),
+                    "conflictType": conflict_type or None,
                 })
 
+        conflict_count = sum(chip["conflict"] for chip in chip_records)
+        conflict_ok_count = sum(chip["conflictType"] == "CONFLICT_OK" for chip in chip_records)
+        conflict_ng_count = sum(chip["conflictType"] == "CONFLICT_NG" for chip in chip_records)
         response_payload = {
             "productName": result_json_path.stem,
             "chipCount": len(chip_records),
             "chips": chip_records,
+            "comparison": {
+                "baseCsv": str(base_csv_path) if base_csv_path else "",
+                "conflictCount": conflict_count,
+                "conflictOkCount": conflict_ok_count,
+                "conflictNgCount": conflict_ng_count,
+            },
         }
         with INFERENCE_CACHE_LOCK:
             WAFER_MAP_CACHE.clear()
@@ -1420,15 +1558,17 @@ class InspectionHandler(BaseHTTPRequestHandler):
         json_first = query.get("json_first", ["true"])[0].lower() in ("1", "true", "yes", "on")
         clear_cache = query.get("clear_cache", ["false"])[0].lower() in ("1", "true", "yes", "on")
         image_search = query.get("image_search", [""])[0]
+        prediction_class = query.get("prediction_class", [""])[0]
         model_prediction_filter = query.get("model_prediction", ["All"])[0] or "All"
         final_status = (query.get("final_status", ["All"])[0] or "All").upper()
+        base_csv = query.get("base_csv", [""])[0].strip()
         chip_mx_text = query.get("chip_mx", [""])[0].strip()
         chip_my_text = query.get("chip_my", [""])[0].strip()
         confusion_cell = query.get("confusion_cell", [""])[0].upper()
         confusion_light = query.get("confusion_light", [""])[0]
 
-        if final_status not in ("ALL", "OK", "NG"):
-            self.send_json({"error": "最终结果筛选仅支持 All、OK 或 NG。"}, HTTPStatus.BAD_REQUEST)
+        if final_status not in ("ALL", "OK", "NG", "CONFLICT", "CONFLICT_OK", "CONFLICT_NG"):
+            self.send_json({"error": "最终结果筛选仅支持 All、OK、NG 或冲突分类。"}, HTTPStatus.BAD_REQUEST)
             return
         if bool(chip_mx_text) != bool(chip_my_text):
             self.send_json({"error": "chip 定位必须同时提供 MX 和 MY。"}, HTTPStatus.BAD_REQUEST)
@@ -1439,6 +1579,17 @@ class InspectionHandler(BaseHTTPRequestHandler):
         except ValueError:
             self.send_json({"error": "chip 定位坐标无效。"}, HTTPStatus.BAD_REQUEST)
             return
+
+        base_statuses = {}
+        if final_status.startswith("CONFLICT"):
+            if not base_csv:
+                self.send_json({"error": "请先输入基准 CSV，再点击比较。"}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                base_statuses, _ = load_base_csv_statuses(base_csv)
+            except (OSError, ValueError) as error:
+                self.send_json({"error": f"读取基准 CSV 失败：{error}"}, HTTPStatus.BAD_REQUEST)
+                return
 
         per_page = num_col * num_row
         cache_cleared = False
@@ -1464,12 +1615,29 @@ class InspectionHandler(BaseHTTPRequestHandler):
                     model_prediction_filter,
                     keyword,
                     image_search,
+                    prediction_class,
                     project_dir,
                 )
-                if final_status != "ALL":
+                if final_status in ("OK", "NG"):
                     items_all = [
                         item for item in items_all
                         if item.get("finalStatus") == final_status
+                    ]
+                elif final_status == "CONFLICT":
+                    items_all = [
+                        item for item in items_all
+                        if is_mapping_conflict(
+                            item.get("finalStatus"),
+                            base_statuses.get((item.get("mapMx"), item.get("mapMy")), ""),
+                        )
+                    ]
+                elif final_status in ("CONFLICT_OK", "CONFLICT_NG"):
+                    items_all = [
+                        item for item in items_all
+                        if mapping_conflict_type(
+                            item.get("finalStatus"),
+                            base_statuses.get((item.get("mapMx"), item.get("mapMy")), ""),
+                        ) == final_status
                     ]
                 if chip_mx is not None:
                     items_all = [
@@ -1928,15 +2096,17 @@ class InspectionHandler(BaseHTTPRequestHandler):
         light_type = query.get("light_type", ["All"])[0] or "All"
         keyword = query.get("keyword", [""])[0]
         image_search = query.get("image_search", [""])[0]
+        prediction_class = query.get("prediction_class", [""])[0]
         model_prediction_filter = query.get("model_prediction", ["All"])[0] or "All"
         final_status = (query.get("final_status", ["All"])[0] or "All").upper()
+        base_csv = query.get("base_csv", [""])[0].strip()
         chip_mx_text = query.get("chip_mx", [""])[0].strip()
         chip_my_text = query.get("chip_my", [""])[0].strip()
         confusion_cell = query.get("confusion_cell", [""])[0].upper()
         confusion_light = query.get("confusion_light", [""])[0]
 
-        if final_status not in ("ALL", "OK", "NG"):
-            self.send_json({"error": "最终结果筛选仅支持 All、OK 或 NG。"}, HTTPStatus.BAD_REQUEST)
+        if final_status not in ("ALL", "OK", "NG", "CONFLICT", "CONFLICT_OK", "CONFLICT_NG"):
+            self.send_json({"error": "最终结果筛选仅支持 All、OK、NG 或冲突分类。"}, HTTPStatus.BAD_REQUEST)
             return
         if bool(chip_mx_text) != bool(chip_my_text):
             self.send_json({"error": "chip 定位必须同时提供 MX 和 MY。"}, HTTPStatus.BAD_REQUEST)
@@ -1947,6 +2117,17 @@ class InspectionHandler(BaseHTTPRequestHandler):
         except ValueError:
             self.send_json({"error": "chip 定位坐标无效。"}, HTTPStatus.BAD_REQUEST)
             return
+
+        base_statuses = {}
+        if final_status.startswith("CONFLICT"):
+            if not base_csv:
+                self.send_json({"error": "请先输入基准 CSV，再点击比较。"}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                base_statuses, _ = load_base_csv_statuses(base_csv)
+            except (OSError, ValueError) as error:
+                self.send_json({"error": f"读取基准 CSV 失败：{error}"}, HTTPStatus.BAD_REQUEST)
+                return
 
         annotations = load_annotations()
         annotation_index = build_annotation_index(annotations)
@@ -1961,10 +2142,27 @@ class InspectionHandler(BaseHTTPRequestHandler):
                     model_prediction_filter,
                     keyword,
                     image_search,
+                    prediction_class,
                     project_dir,
                 )
-                if final_status != "ALL":
+                if final_status in ("OK", "NG"):
                     items = [item for item in items if item.get("finalStatus") == final_status]
+                elif final_status == "CONFLICT":
+                    items = [
+                        item for item in items
+                        if is_mapping_conflict(
+                            item.get("finalStatus"),
+                            base_statuses.get((item.get("mapMx"), item.get("mapMy")), ""),
+                        )
+                    ]
+                elif final_status in ("CONFLICT_OK", "CONFLICT_NG"):
+                    items = [
+                        item for item in items
+                        if mapping_conflict_type(
+                            item.get("finalStatus"),
+                            base_statuses.get((item.get("mapMx"), item.get("mapMy")), ""),
+                        ) == final_status
+                    ]
                 if chip_mx is not None:
                     items = [
                         item for item in items
@@ -2102,7 +2300,7 @@ def main():
     else:
         threading.Thread(
             target=load_inference_items,
-            args=(CONFIGURED_RESULT_JSON, "All", "All", "", "", str(PROJECT_DIR)),
+            args=(CONFIGURED_RESULT_JSON, "All", "All", "", "", "", str(PROJECT_DIR)),
             daemon=True,
             name="inference-cache-warmup",
         ).start()
