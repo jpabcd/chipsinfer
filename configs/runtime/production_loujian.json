@@ -1,0 +1,36 @@
+{
+  "paths": {
+    "imgs_root": "../data/20260806/大图",
+    "output_root": "outputs/48AMA_line_0821_batchidx_loujian",
+    "summary_json": null
+  },
+  "line": {
+    "order_by": "mtime",
+    "reverse": false,
+    "max_products": 0,
+    "skip_incomplete": true,
+    "skip_completed": true,
+    "fail_fast": false,
+    "watch": false,
+    "rescan_interval": 30.0,
+    "dry_run": false
+  },
+  "inference": {
+    "batch_size": 2,
+    "num_workers": 2,
+    "persistent_workers": false,
+    "prefetch_factor": 2,
+    "light_read_workers": 4,
+    "max_batches": 0,
+    "max_samples": 0,
+    "unsafe_missing_ok": false,
+    "trace_batches": false
+  },
+  "outputs": {
+    "defect_report": true,
+    "auto_external_xy_csv": true,
+    "save_predict_input": false,
+    "save_predict_input_only_with_boxes": false,
+    "save_predict_input_on_any_light_ng": false
+  }
+}

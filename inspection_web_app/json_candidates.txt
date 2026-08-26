@@ -1,4 +1,4 @@
 # 固定候选 JSON 列表（每行一个）
 # 支持绝对路径或相对路径（相对本文件目录或工程目录解析）
-outputs/run_20260803_034922/json/main_inferer_dataloader_results.json
-outputs/run_20260803_024818/json/main_inferer_dataloader_results.json
+#outputs/run_20260803_034922/json/main_inferer_dataloader_results.json
+#outputs/run_20260803_024818/json/main_inferer_dataloader_results.json

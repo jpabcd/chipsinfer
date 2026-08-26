@@ -1,0 +1,32 @@
+{
+  "name": "48AMA",
+  "yolo_config": "combined_yolo_inferers_config.example_loujian.json",
+  "rect_detection": {
+    "x_scale": 0.3,
+    "y_scale": 0.5,
+    "threshold": 18,
+    "x_dilate": 45,
+    "y_dilate": 14,
+    "min_width": 600,
+    "max_width": 950,
+    "min_height": 90,
+    "max_height": 220,
+    "min_aspect": 3.6,
+    "max_aspect": 8.5,
+    "min_area": 2500,
+    "margin": 100
+  },
+  "alignment": {
+    "mech_delta_x": 1421.0,
+    "mech_delta_y": 283.0,
+    "delta_x_pixel": 950.0,
+    "delta_y_pixel": 185.0,
+    "strict_align": false,
+    "allow_x_reverse": false,
+    "allow_y_reverse": false
+  },
+  "wafer_map": {
+    "figsize": [20.0, 16.0],
+    "chip_aspect": 5.0
+  }
+}
