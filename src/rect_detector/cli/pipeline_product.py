@@ -34,6 +34,20 @@ def run_product(
     )
     parser.add_argument("--prefetch-factor", type=int, default=2)
     parser.add_argument("--light-read-workers", type=int, default=4)
+    parser.add_argument("--raw-image-width", type=int, default=5120)
+    parser.add_argument("--raw-image-height", type=int, default=5120)
+    parser.add_argument(
+        "--raw-dtype",
+        choices=("auto", "uint8", "uint16"),
+        default="auto",
+        help="Stored raw pixel type; auto infers uint8 or uint16 from file size.",
+    )
+    parser.add_argument(
+        "--raw-byte-order",
+        choices=("little", "big"),
+        default="little",
+        help="Byte order for uint16 raw files.",
+    )
     parser.add_argument("--max-batches", type=int, default=0)
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument(
@@ -152,6 +166,14 @@ def run_product(
         str(args.prefetch_factor),
         "--light-read-workers",
         str(args.light_read_workers),
+        "--raw-image-width",
+        str(args.raw_image_width),
+        "--raw-image-height",
+        str(args.raw_image_height),
+        "--raw-dtype",
+        args.raw_dtype,
+        "--raw-byte-order",
+        args.raw_byte_order,
         "--max-batches",
         str(args.max_batches),
         "--max-samples",

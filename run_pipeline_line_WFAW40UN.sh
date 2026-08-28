@@ -11,8 +11,8 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
-PRODUCT_CONFIG="${PRODUCT_CONFIG:-configs/products/48AMA.json}"
-RUNTIME_CONFIG="${RUNTIME_CONFIG:-configs/runtime/production.json}"
+PRODUCT_CONFIG="${PRODUCT_CONFIG:-configs/products/WFAW40UN.json}"
+RUNTIME_CONFIG="${RUNTIME_CONFIG:-configs/runtime/WFAW40UN.json}"
 
 "$PYTHON_BIN" run_pipeline_line.py \
   --product-config "$PRODUCT_CONFIG" \
@@ -20,5 +20,5 @@ RUNTIME_CONFIG="${RUNTIME_CONFIG:-configs/runtime/production.json}"
   "$@"
 
 
-#需要保存时显式传入：./run_pipeline_line.sh --save-predict-input --save-predict-input-on-any-light-ng
-#通常产线：./run_pipeline_line.sh --output-root outputs/48AMA_line --watch --rescan-interval 30
+#需要保存时显式传入：./run_pipeline_line_WFAW40UN.sh --save-predict-input --save-predict-input-on-any-light-ng
+#通常产线：./run_pipeline_line_WFAW40UN.sh --output-root outputs/WFAW40UN_line --watch --rescan-interval 30

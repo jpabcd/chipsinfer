@@ -273,7 +273,7 @@ def _to_uint8(image: np.ndarray) -> np.ndarray:
 
 
 def _to_yolo_image(image: np.ndarray) -> np.ndarray:
-    image = _to_uint8(np.asarray(image))
+    image = _to_uint8(image)
     if image.ndim == 2:
         return np.ascontiguousarray(np.repeat(image[:, :, None], 3, axis=2))
     if image.ndim == 3 and image.shape[2] == 1:

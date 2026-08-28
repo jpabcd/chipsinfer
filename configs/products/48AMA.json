@@ -1,6 +1,12 @@
 {
   "name": "48AMA",
   "yolo_config": "combined_yolo_inferers_config.example.json",
+  "raw_image": {
+    "width": 5120,
+    "height": 5120,
+    "dtype": "auto",
+    "byte_order": "little"
+  },
   "rect_detection": {
     "x_scale": 0.3,
     "y_scale": 0.5,

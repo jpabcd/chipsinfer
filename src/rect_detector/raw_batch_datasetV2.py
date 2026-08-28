@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
+from functools import lru_cache, partial
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -14,33 +15,110 @@ from torch.utils.data import DataLoader, Dataset
 from rect_detector.align_chip_rects import MechanicalInfo, parse_mechanical_txt
 
 
-IMAGE_WIDTH = 5120
-IMAGE_HEIGHT = 5120
+DEFAULT_IMAGE_WIDTH = 5120
+DEFAULT_IMAGE_HEIGHT = 5120
+RAW_DTYPES = {"auto", "uint8", "uint16"}
+RAW_BYTE_ORDERS = {"little", "big"}
 _IMAGE3_RE = re.compile(r"^IMAGE3_(\d+)\.raw$")
 
 
-def read_gray_5120(path: str | Path) -> np.ndarray:
-    """Read a headerless 5120x5120 uint8/uint16 file as uint8 grayscale."""
+def read_gray_raw(
+    path: str | Path,
+    *,
+    width: int = DEFAULT_IMAGE_WIDTH,
+    height: int = DEFAULT_IMAGE_HEIGHT,
+    dtype: str = "auto",
+    byte_order: str = "little",
+) -> np.ndarray:
+    """Read a headerless uint8/uint16 raw image as uint8 grayscale."""
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"image file does not exist: {path}")
 
-    pixel_count = IMAGE_WIDTH * IMAGE_HEIGHT
+    width = int(width)
+    height = int(height)
+    dtype = str(dtype).lower()
+    byte_order = str(byte_order).lower()
+    if width <= 0 or height <= 0:
+        raise ValueError(f"image width and height must be positive, got {width}x{height}")
+    if dtype not in RAW_DTYPES:
+        raise ValueError(f"raw dtype must be one of {sorted(RAW_DTYPES)}, got {dtype!r}")
+    if byte_order not in RAW_BYTE_ORDERS:
+        raise ValueError(
+            f"raw byte_order must be one of {sorted(RAW_BYTE_ORDERS)}, got {byte_order!r}"
+        )
+
+    pixel_count = width * height
     file_size = path.stat().st_size
-    if file_size == pixel_count:
-        # image_u8 = np.fromfile(path, dtype=np.uint8)
-        return np.fromfile(path, dtype=np.uint8).reshape(IMAGE_HEIGHT, IMAGE_WIDTH)
-    elif file_size == pixel_count * np.dtype(np.uint16).itemsize:
-        image_u16 = np.fromfile(path, dtype=np.uint16)
+    uint8_size = pixel_count
+    uint16_size = pixel_count * np.dtype(np.uint16).itemsize
+    if dtype in {"auto", "uint8"} and file_size == uint8_size:
+        return np.fromfile(path, dtype=np.uint8).reshape(height, width)
+    if dtype in {"auto", "uint16"} and file_size == uint16_size:
+        endian_prefix = "<" if byte_order == "little" else ">"
+        image_u16 = np.fromfile(path, dtype=np.dtype(f"{endian_prefix}u2"))
         # Shift in place to avoid creating an extra temporary uint16 array.
         np.right_shift(image_u16, 8, out=image_u16)
         image_u8 = image_u16.astype(np.uint8, copy=False)
-        return image_u8.reshape(IMAGE_HEIGHT, IMAGE_WIDTH)
-    else:
+        return image_u8.reshape(height, width)
+    expected = (
+        f"{uint8_size} bytes (uint8) or {uint16_size} bytes (uint16)"
+        if dtype == "auto"
+        else f"{uint8_size if dtype == 'uint8' else uint16_size} bytes ({dtype})"
+    )
+    raise ValueError(
+        f"unexpected file size for {path}: {file_size} bytes; expected {expected} "
+        f"for {width}x{height}"
+    )
+
+
+def memmap_gray_raw(
+    path: str | Path,
+    *,
+    width: int = DEFAULT_IMAGE_WIDTH,
+    height: int = DEFAULT_IMAGE_HEIGHT,
+    dtype: str = "auto",
+    byte_order: str = "little",
+) -> np.ndarray:
+    """Memory-map a headerless raw image without eagerly loading its pixels."""
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"image file does not exist: {path}")
+
+    width = int(width)
+    height = int(height)
+    dtype = str(dtype).lower()
+    byte_order = str(byte_order).lower()
+    if width <= 0 or height <= 0:
+        raise ValueError(f"image width and height must be positive, got {width}x{height}")
+    if dtype not in RAW_DTYPES:
+        raise ValueError(f"raw dtype must be one of {sorted(RAW_DTYPES)}, got {dtype!r}")
+    if byte_order not in RAW_BYTE_ORDERS:
         raise ValueError(
-            f"unexpected file size for {path}: {file_size} bytes; "
-            f"expected {pixel_count} bytes (uint8) or {pixel_count * 2} bytes (uint16)"
+            f"raw byte_order must be one of {sorted(RAW_BYTE_ORDERS)}, got {byte_order!r}"
         )
+
+    pixel_count = width * height
+    file_size = path.stat().st_size
+    if dtype in {"auto", "uint8"} and file_size == pixel_count:
+        return np.memmap(path, mode="r", dtype=np.uint8, shape=(height, width))
+    if dtype in {"auto", "uint16"} and file_size == pixel_count * np.dtype(np.uint16).itemsize:
+        endian_prefix = "<" if byte_order == "little" else ">"
+        return np.memmap(path, mode="r", dtype=np.dtype(f"{endian_prefix}u2"), shape=(height, width))
+    expected = (
+        f"{pixel_count} bytes (uint8) or {pixel_count * 2} bytes (uint16)"
+        if dtype == "auto"
+        else f"{pixel_count if dtype == 'uint8' else pixel_count * 2} bytes ({dtype})"
+    )
+    raise ValueError(
+        f"unexpected file size for {path}: {file_size} bytes; expected {expected} "
+        f"for {width}x{height}"
+    )
+
+
+def read_gray_5120(path: str | Path) -> np.ndarray:
+    """Compatibility wrapper for legacy 5120x5120 raw files."""
+    return read_gray_raw(path)
 
 
 @dataclass(frozen=True)
@@ -75,16 +153,66 @@ class RawBatchDataset(Dataset):
         root_dir: str | Path,
         strict: bool = True,
         light_read_workers: int = 1,
+        image_width: int = DEFAULT_IMAGE_WIDTH,
+        image_height: int = DEFAULT_IMAGE_HEIGHT,
+        raw_dtype: str = "auto",
+        raw_byte_order: str = "little",
     ) -> None:
         self.root_dir = Path(root_dir)
         self.strict = bool(strict)
         self.light_read_workers = max(1, int(light_read_workers))
+        self.image_width = int(image_width)
+        self.image_height = int(image_height)
+        self.raw_dtype = str(raw_dtype).lower()
+        self.raw_byte_order = str(raw_byte_order).lower()
+        self._read_executor: ThreadPoolExecutor | None = None
+        self._read_executor_pid: int | None = None
+        if self.image_width <= 0 or self.image_height <= 0:
+            raise ValueError(
+                f"image_width and image_height must be positive, got "
+                f"{self.image_width}x{self.image_height}"
+            )
+        if self.raw_dtype not in RAW_DTYPES:
+            raise ValueError(f"raw_dtype must be one of {sorted(RAW_DTYPES)}")
+        if self.raw_byte_order not in RAW_BYTE_ORDERS:
+            raise ValueError(f"raw_byte_order must be one of {sorted(RAW_BYTE_ORDERS)}")
         self.light1_dir = self.root_dir / "Light1-raw"
         self.light2_dir = self.root_dir / "Light2-raw"
         self.light3_dir = self.root_dir / "Light3-raw"
         self.light4_dir = self.root_dir / "Light4-raw"
 
         self.samples = self._discover_samples()
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Do not serialize a live executor when DataLoader uses spawn workers."""
+        state = self.__dict__.copy()
+        state["_read_executor"] = None
+        state["_read_executor_pid"] = None
+        return state
+
+    def close(self) -> None:
+        """Release the local raw-image reader executor, if this process owns one."""
+        if self._read_executor is not None:
+            self._read_executor.shutdown(wait=True)
+            self._read_executor = None
+            self._read_executor_pid = None
+
+    def _get_read_executor(self) -> ThreadPoolExecutor | None:
+        if self.light_read_workers <= 1:
+            return None
+
+        process_id = os.getpid()
+        if self._read_executor_pid != process_id:
+            # A DataLoader worker created through fork inherits object fields but
+            # not the parent's executor threads. Discard that stale reference.
+            self._read_executor = None
+            self._read_executor_pid = process_id
+        if self._read_executor is None:
+            self._read_executor = ThreadPoolExecutor(
+                max_workers=min(self.light_read_workers, 5),
+                thread_name_prefix="raw-image-read",
+            )
+        return self._read_executor
 
     def _discover_samples(self) -> list[RawBatchSample]:
         if not self.light3_dir.is_dir():
@@ -142,26 +270,37 @@ class RawBatchDataset(Dataset):
         return len(self.samples)
 
     def _read_sample_images(self, sample: RawBatchSample) -> tuple[np.ndarray, dict[str, np.ndarray]]:
-        image_paths = {
-            "rect_input": sample.rect_input_path,
+        light_paths = {
             "light_1": sample.light_1_path,
             "light_2": sample.light_2_path,
             "light_3": sample.light_3_path,
             "light_4": sample.light_4_path,
         }
+        read_rect_input = partial(
+            read_gray_raw,
+            width=self.image_width,
+            height=self.image_height,
+            dtype=self.raw_dtype,
+            byte_order=self.raw_byte_order,
+        )
+        read_light_raw = partial(
+            memmap_gray_raw,
+            width=self.image_width,
+            height=self.image_height,
+            dtype=self.raw_dtype,
+            byte_order=self.raw_byte_order,
+        )
         if self.light_read_workers <= 1:
-            images = {
-                name: read_gray_5120(path)
-                for name, path in image_paths.items()
-            }
+            light_images = {name: read_light_raw(path) for name, path in light_paths.items()}
         else:
-            # Read rect input and all light images in parallel to reduce per-sample IO wall time.
-            with ThreadPoolExecutor(max_workers=min(self.light_read_workers, len(image_paths))) as pool:
-                arrays = list(pool.map(read_gray_5120, image_paths.values()))
-            images = dict(zip(image_paths.keys(), arrays))
+            # One executor is reused by every sample handled by this DataLoader
+            # process, avoiding thread creation and teardown in every __getitem__.
+            executor = self._get_read_executor()
+            assert executor is not None
+            arrays = list(executor.map(read_light_raw, light_paths.values()))
+            light_images = dict(zip(light_paths.keys(), arrays))
 
-        rect_input_img = images.pop("rect_input")
-        return rect_input_img, images
+        return read_rect_input(sample.rect_input_path), light_images
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         sample = self.samples[idx]
@@ -223,6 +362,10 @@ def build_raw_batch_dataloader(
     prefetch_factor: int | None = None,
     strict: bool = True,
     light_read_workers: int = 1,
+    image_width: int = DEFAULT_IMAGE_WIDTH,
+    image_height: int = DEFAULT_IMAGE_HEIGHT,
+    raw_dtype: str = "auto",
+    raw_byte_order: str = "little",
     **dataloader_kwargs: Any,
 ) -> DataLoader:
     """Build a DataLoader that yields dicts of lists for batch inference."""
@@ -230,6 +373,10 @@ def build_raw_batch_dataloader(
         root_dir=root_dir,
         strict=strict,
         light_read_workers=light_read_workers,
+        image_width=image_width,
+        image_height=image_height,
+        raw_dtype=raw_dtype,
+        raw_byte_order=raw_byte_order,
     )
     loader_kwargs: dict[str, Any] = {
         "batch_size": max(1, int(batch_size)),
@@ -319,6 +466,8 @@ __all__ = [
     "RawBatchSample",
     "build_raw_batch_dataloader",
     "raw_batch_collate_fn",
+    "memmap_gray_raw",
+    "read_gray_raw",
     "read_gray_5120",
 ]
 

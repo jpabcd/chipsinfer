@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-_PRODUCT_SECTIONS = {"name", "yolo_config", "rect_detection", "alignment", "wafer_map"}
+_PRODUCT_SECTIONS = {"name", "yolo_config", "raw_image", "rect_detection", "alignment", "wafer_map"}
 _RUNTIME_SECTIONS = {"paths", "line", "inference", "outputs"}
 
 _PRODUCT_OPTION_MAP = {
@@ -50,10 +50,11 @@ def validate_product_config(config: Mapping[str, Any]) -> None:
     unknown = set(config) - _PRODUCT_SECTIONS
     if unknown:
         raise ValueError(f"Unknown product config fields: {sorted(unknown)}")
-    for section in ("rect_detection", "alignment", "wafer_map"):
+    for section in ("raw_image", "rect_detection", "alignment", "wafer_map"):
         if section in config:
             _require_mapping(config[section], f"product config '{section}'")
 
+    raw_image = config.get("raw_image", {})
     rect = config.get("rect_detection", {})
     alignment = config.get("alignment", {})
     allowed_rect = set(_PRODUCT_OPTION_MAP) - {
@@ -65,13 +66,27 @@ def validate_product_config(config: Mapping[str, Any]) -> None:
     }
     unknown_rect = set(rect) - allowed_rect
     unknown_alignment = set(alignment) - allowed_alignment
+    unknown_raw_image = set(raw_image) - {"width", "height", "dtype", "byte_order"}
     unknown_wafer = set(config.get("wafer_map", {})) - {"chip_aspect", "figsize"}
+    if unknown_raw_image:
+        raise ValueError(f"Unknown raw_image fields: {sorted(unknown_raw_image)}")
     if unknown_rect:
         raise ValueError(f"Unknown rect_detection fields: {sorted(unknown_rect)}")
     if unknown_alignment:
         raise ValueError(f"Unknown alignment fields: {sorted(unknown_alignment)}")
     if unknown_wafer:
         raise ValueError(f"Unknown wafer_map fields: {sorted(unknown_wafer)}")
+    for field in ("width", "height"):
+        if field in raw_image and (
+            isinstance(raw_image[field], bool)
+            or not isinstance(raw_image[field], int)
+            or raw_image[field] <= 0
+        ):
+            raise ValueError(f"product raw_image.{field} must be a positive integer")
+    if "dtype" in raw_image and raw_image["dtype"] not in {"auto", "uint8", "uint16"}:
+        raise ValueError("product raw_image.dtype must be 'auto', 'uint8', or 'uint16'")
+    if "byte_order" in raw_image and raw_image["byte_order"] not in {"little", "big"}:
+        raise ValueError("product raw_image.byte_order must be 'little' or 'big'")
 
 
 def validate_runtime_config(config: Mapping[str, Any]) -> None:
@@ -114,6 +129,16 @@ def product_config_args(config: Mapping[str, Any], project_root: Path) -> list[s
         if not yolo_path.is_absolute():
             yolo_path = (project_root / yolo_path).resolve()
         args.extend(["--yolo-config", str(yolo_path)])
+
+    raw_image = config.get("raw_image", {})
+    for field, option in (
+        ("width", "--raw-image-width"),
+        ("height", "--raw-image-height"),
+        ("dtype", "--raw-dtype"),
+        ("byte_order", "--raw-byte-order"),
+    ):
+        if field in raw_image:
+            args.extend([option, str(raw_image[field])])
 
     for section_name in ("rect_detection", "alignment"):
         section = config.get(section_name, {})

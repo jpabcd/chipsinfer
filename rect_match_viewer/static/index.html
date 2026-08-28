@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rect Match Viewer</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">RECT DETECTOR</p>
+        <h1>Rect Match Viewer</h1>
+        <p class="subtitle">读取产品配置，预览 MSK 检测框与机械 TXT 坐标匹配结果</p>
+      </div>
+      <div class="badge">单样本调试工具</div>
+    </header>
+
+    <section class="control card">
+      <label>产品配置 JSON
+        <input id="configPath" value="configs/products/WFAW40UN.json">
+      </label>
+      <label>MSK 文件
+        <input id="mskPath" value="temp/S26E31147-03/Light1-raw/IMAGE1_0113.msk">
+      </label>
+      <label>TXT 文件（留空则自动匹配同名 TXT）
+        <input id="txtPath" placeholder="IMAGE1_0113.txt">
+      </label>
+      <button id="run">读取配置并执行匹配</button>
+      <p id="message" class="message"></p>
+    </section>
+
+    <section id="summary" class="summary card hidden"></section>
+
+    <section class="images">
+      <article class="card panel"><h2>MSK 原图</h2><img id="msk" alt="MSK 原图"></article>
+      <article class="card panel"><h2>匹配叠加结果</h2><img id="overlay" alt="匹配结果"></article>
+    </section>
+
+    <section class="details">
+      <article class="card txt-panel"><h2>TXT 内容</h2><pre id="txt"></pre></article>
+      <article class="card table-panel"><h2>匹配明细</h2><div class="table-wrap"><table><thead><tr><th>框号</th><th>位置</th><th>MX</th><th>MY</th><th>残差 μm</th><th>状态</th></tr></thead><tbody id="records"></tbody></table></div></article>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

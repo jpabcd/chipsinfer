@@ -85,6 +85,20 @@ def main(
         default=4,
         help="Per-sample thread count for parallel light image reads (1 disables).",
     )
+    parser.add_argument("--raw-image-width", type=int, default=5120, help="Headerless raw image width.")
+    parser.add_argument("--raw-image-height", type=int, default=5120, help="Headerless raw image height.")
+    parser.add_argument(
+        "--raw-dtype",
+        choices=("auto", "uint8", "uint16"),
+        default="auto",
+        help="Stored raw pixel type; auto infers uint8 or uint16 from file size.",
+    )
+    parser.add_argument(
+        "--raw-byte-order",
+        choices=("little", "big"),
+        default="little",
+        help="Byte order for uint16 raw files.",
+    )
     parser.add_argument("--max-batches", type=int, default=0, help="Stop after N dataloader batches (0 means all).")
     parser.add_argument("--max-samples", type=int, default=0, help="Stop after N inferred samples (0 means all).")
     parser.add_argument(
@@ -184,6 +198,10 @@ def main(
         prefetch_factor=args.prefetch_factor,
         strict=not args.unsafe_missing_ok,
         light_read_workers=args.light_read_workers,
+        image_width=args.raw_image_width,
+        image_height=args.raw_image_height,
+        raw_dtype=args.raw_dtype,
+        raw_byte_order=args.raw_byte_order,
     )
 
     if inferer is None:
@@ -254,7 +272,9 @@ def main(
                 samples_sink.write(b"".join(sample_jsonl_buffer))
                 sample_jsonl_buffer.clear()
 
+        batch_wait_start = perf_counter()
         for batch_index, batch in enumerate(dataloader):
+            data_wait_s = perf_counter() - batch_wait_start
             if args.max_batches > 0 and batch_index >= args.max_batches:
                 break
 
@@ -275,7 +295,11 @@ def main(
                 valid_indices.append(i)
 
             if not valid_indices:
-                print(f"batch[{batch_index}] skipped: all {len(sample_ids)} samples have no chips")
+                print(
+                    f"batch[{batch_index}] skipped: all {len(sample_ids)} samples have no chips "
+                    f"data_wait_s={data_wait_s:.3f}"
+                )
+                batch_wait_start = perf_counter()
                 continue
 
             valid_rect_input_imgs = [rect_input_imgs[i] for i in valid_indices]
@@ -296,12 +320,7 @@ def main(
             infer_elapsed = perf_counter() - infer_start
             total_samples_inferred += len(indexed_results)
             total_samples_skipped_error += len(skipped_on_error)
-
-            print(
-                f"batch[{batch_index}] inferred={len(indexed_results)} "
-                f"skipped_no_chip={len(sample_ids) - len(valid_indices)} skipped_error={len(skipped_on_error)} "
-                f"elapsed_s={infer_elapsed:.3f}"
-            )
+            output_start = perf_counter()
 
             for sample_id, num_str, error_msg in skipped_on_error:
                 print(f"  skipped sample_id={sample_id} num_str={num_str} error={error_msg}")
@@ -340,6 +359,15 @@ def main(
                     flush_sample_jsonl_buffer()
                 del serialized_record, sample_record
 
+            flush_sample_jsonl_buffer()
+            output_elapsed = perf_counter() - output_start
+            print(
+                f"batch[{batch_index}] inferred={len(indexed_results)} "
+                f"skipped_no_chip={len(sample_ids) - len(valid_indices)} skipped_error={len(skipped_on_error)} "
+                f"data_wait_s={data_wait_s:.3f} inference_s={infer_elapsed:.3f} "
+                f"output_s={output_elapsed:.3f}"
+            )
+
             if args.max_samples > 0 and total_samples_inferred >= args.max_samples:
                 break
 
@@ -348,8 +376,7 @@ def main(
             del valid_sample_ids, valid_num_strs
             del sample_ids, num_strs, rect_input_imgs, mechanical_infos_batch, light_image_batches
             del batch
-
-            flush_sample_jsonl_buffer()
+            batch_wait_start = perf_counter()
 
     run_elapsed = perf_counter() - run_start
 

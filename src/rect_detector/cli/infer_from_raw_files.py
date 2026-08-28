@@ -292,6 +292,20 @@ def main() -> None:
         default=4,
         help="Per-sample thread count for parallel light image reads (1 disables).",
     )
+    parser.add_argument("--raw-image-width", type=int, default=5120, help="Headerless raw image width.")
+    parser.add_argument("--raw-image-height", type=int, default=5120, help="Headerless raw image height.")
+    parser.add_argument(
+        "--raw-dtype",
+        choices=("auto", "uint8", "uint16"),
+        default="auto",
+        help="Stored raw pixel type; auto infers uint8 or uint16 from file size.",
+    )
+    parser.add_argument(
+        "--raw-byte-order",
+        choices=("little", "big"),
+        default="little",
+        help="Byte order for uint16 raw files.",
+    )
     parser.add_argument("--max-batches", type=int, default=0, help="Stop after N dataloader batches (0 means all).")
     parser.add_argument("--max-samples", type=int, default=0, help="Stop after N inferred samples (0 means all).")
     parser.add_argument(
@@ -364,6 +378,10 @@ def main() -> None:
         prefetch_factor=args.prefetch_factor,
         strict=not args.unsafe_missing_ok,
         light_read_workers=args.light_read_workers,
+        image_width=args.raw_image_width,
+        image_height=args.raw_image_height,
+        raw_dtype=args.raw_dtype,
+        raw_byte_order=args.raw_byte_order,
     )
 
     rect_inferer = RectInferer(
