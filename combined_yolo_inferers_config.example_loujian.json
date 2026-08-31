@@ -47,13 +47,14 @@
     },
     {
       "name": "light_3",
-      "weight": "./my_weights/temp_next/20260828-133823-9f9d8b06-light3-temp/output/train/weights/best.pt",
+      "weight": "./my_weights/temp_next/20260828-133823-9f9d8b06-light3-temp2/output/train/weights/best.pt",
       "analyse": {
           "中间线": {"enabled": false},
           "可忽略-曝点":{"enabled": false},
-          "线条问题":{"width": {">": 120}},
+          "线条问题":{"width": {">": 120},"confidence": {">": 0.45}},
           "电极污染": {"confidence": {">": 0.4}},
-          "轻微电极污染": {"confidence": {">": 0.6}}
+          "双晶异常":{"enabled": false},
+          "轻微电极污染": {"confidence": {">": 0.8}}
       },
         "crop_width": 795,
         "crop_height": 170,

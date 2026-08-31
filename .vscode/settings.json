@@ -4,7 +4,7 @@
   "terminal.integrated.scrollback": 2000,
   "terminal.integrated.gpuAcceleration": "off",
   "terminal.integrated.persistentSessionReviveProcess": "never",
-  "terminal.integrated.tabs.enabled": false,
+  "terminal.integrated.tabs.enabled": true,
   "terminal.integrated.enablePersistentSessions": false,
   "terminal.integrated.rendererType": "dom"
 }

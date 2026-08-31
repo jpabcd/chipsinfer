@@ -1,7 +1,7 @@
 {
   "paths": {
-    "imgs_root": "temp/48AMA/",
-    "output_root": "outputs/48AMA_line_0821_batchidx_loujian",
+    "imgs_root": "../data/20260806/大图",
+    "output_root": "outputs/48AMA_line_0821_batchidx_loujian_20260831",
     "summary_json": null
   },
   "line": {
