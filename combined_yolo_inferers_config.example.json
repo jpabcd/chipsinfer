@@ -58,7 +58,7 @@
         "crop_height": 170,
         "conf": 0.35,
         "iou": 0.7,
-        "imgsz": 384,
+        "imgsz": 320,
         "device": "0",
         "quantize": 16,
         "use_engine": true,
