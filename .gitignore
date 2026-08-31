@@ -14,3 +14,4 @@ benchmark_raw_io.py
 temp
 .venv
 benchmark_raw_io.py
+cloudflared.exe
