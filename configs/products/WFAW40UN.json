@@ -8,8 +8,8 @@
     "byte_order": "little"
   },
   "rect_detection": {
-    "x_scale": 0.8,
-    "y_scale": 0.8,
+    "x_scale": 0.5,
+    "y_scale": 0.5,
     "threshold": 2,
     "x_dilate": 45,
     "y_dilate": 45,
