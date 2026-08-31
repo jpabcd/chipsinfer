@@ -52,7 +52,18 @@
           "中间线": {"enabled": false},
           "可忽略-曝点":{"enabled": false},
           "线条问题":{"width": {">": 120}},
-          "电极污染": {"confidence": {">": 0.4}}
+          "电极污染": {
+            "confidence": {">": 0.4},
+            "classifier": {
+              "kind": "dummy",
+              "crop_width": 224,
+              "crop_height": 224,
+              "positive_label": "电极污染",
+              "negative_label": "可忽略-电极污染",
+              "positive": true,
+              "confidence": 1.0
+            }
+          }
       },
         "crop_width": 832,
         "crop_height": 170,

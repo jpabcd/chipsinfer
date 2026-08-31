@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import operator
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 
 from rect_detector.align_chip_rects import AlignResult, AlignedRect
+from rect_detector.dummy_classifier import DummyBinaryClassifier
 
 try:
     from ultralytics import YOLO
@@ -173,12 +174,64 @@ class CropBox:
 
 @dataclass(frozen=True)
 class YoloDetection:
+    """YoloDetection 是一个检测框（一个 box）对应的实例。"""
     box: tuple[float, float, float, float] # (x1, y1, x2, y2)
     class_id: int
     class_name: str
     confidence: float
     area_ratio: float
     area: float = 0.0
+
+
+@dataclass(frozen=True)
+class YoloDetectionCandidate:
+    """Runtime-only detection data for optional second-stage classification."""
+
+    crop_index: int
+    detection: YoloDetection
+    crop_image: np.ndarray | None = field(repr=False, compare=False)
+    box_crop_width: int | None = None
+    box_crop_height: int | None = None
+
+    @property
+    def box_image(self) -> np.ndarray:
+        """Return the configured box-centered ROI from the YOLO crop image."""
+        if self.crop_image is None:
+            raise RuntimeError("box image was not retained because no classifier is configured")
+        x1, y1, x2, y2 = self.detection.box
+        height, width = self.crop_image.shape[:2]
+        if self.box_crop_width is None or self.box_crop_height is None:
+            left = int(np.clip(round(x1), 0, width))
+            top = int(np.clip(round(y1), 0, height))
+            right = int(np.clip(round(x2), left, width))
+            bottom = int(np.clip(round(y2), top, height))
+            return self.crop_image[top:bottom, left:right]
+
+        center_x = (x1 + x2) / 2.0
+        center_y = (y1 + y2) / 2.0
+        left = int(round(center_x - self.box_crop_width / 2.0))
+        top = int(round(center_y - self.box_crop_height / 2.0))
+        right = left + self.box_crop_width
+        bottom = top + self.box_crop_height
+        source_left = max(left, 0)
+        source_top = max(top, 0)
+        source_right = min(right, width)
+        source_bottom = min(bottom, height)
+        roi = np.zeros(
+            (self.box_crop_height, self.box_crop_width, *self.crop_image.shape[2:]),
+            dtype=self.crop_image.dtype,
+        )
+        if source_right <= source_left or source_bottom <= source_top:
+            return roi
+        destination_left = source_left - left
+        destination_top = source_top - top
+        destination_right = destination_left + (source_right - source_left)
+        destination_bottom = destination_top + (source_bottom - source_top)
+        roi[destination_top:destination_bottom, destination_left:destination_right] = self.crop_image[
+            source_top:source_bottom,
+            source_left:source_right,
+        ]
+        return roi
 
 
 @dataclass(frozen=True)
@@ -349,6 +402,8 @@ class YoloResultAnalyser:
 
         self.rules: dict[str, tuple[tuple[str, str, float], ...]] = {}
         self.disabled_classes: set[str] = set()
+        self.classifiers: dict[str, DummyBinaryClassifier] = {}
+        self.classifier_crop_sizes: dict[str, tuple[int, int]] = {}
         for class_name, raw_rules in raw_config.items():
             if not isinstance(class_name, str) or not class_name.strip():
                 raise ValueError("analyse class names must be non-empty strings")
@@ -364,9 +419,36 @@ class YoloResultAnalyser:
                 self.rules[normalized_class_name] = ()
                 continue
 
+            classifier_config = raw_rules.get("classifier")
+            if classifier_config is not None:
+                if not isinstance(classifier_config, Mapping):
+                    raise ValueError(f"analyse[{class_name!r}].classifier must be an object")
+                classifier_kind = str(classifier_config.get("kind", "dummy")).strip().lower()
+                if classifier_kind != "dummy":
+                    raise ValueError(
+                        f"analyse[{class_name!r}].classifier.kind={classifier_kind!r} is unsupported; "
+                        "only 'dummy' is currently available"
+                    )
+                box_crop_width = int(classifier_config.get("crop_width", 224))
+                box_crop_height = int(classifier_config.get("crop_height", 224))
+                if box_crop_width <= 0 or box_crop_height <= 0:
+                    raise ValueError(
+                        f"analyse[{class_name!r}].classifier crop_width and crop_height must be positive"
+                    )
+                self.classifiers[normalized_class_name] = DummyBinaryClassifier(
+                    positive_label=str(classifier_config.get("positive_label", normalized_class_name)),
+                    negative_label=str(classifier_config.get("negative_label", "negative")),
+                    positive=bool(classifier_config.get("positive", True)),
+                    confidence=float(classifier_config.get("confidence", 1.0)),
+                )
+                self.classifier_crop_sizes[normalized_class_name] = (
+                    box_crop_width,
+                    box_crop_height,
+                )
+
             normalized_rules: list[tuple[str, str, float]] = []
             for field_name, raw_condition in raw_rules.items():
-                if field_name == "enabled":
+                if field_name in {"enabled", "classifier"}:
                     continue
                 if field_name not in _ANALYSE_FIELDS:
                     raise ValueError(
@@ -396,36 +478,127 @@ class YoloResultAnalyser:
         )
 
     def __call__(self, detections: Sequence[YoloDetection]) -> YoloAnalysisResult:
-        matched_boxes: list[YoloDetection] = []
-        matched_classes: set[str] = set()
-        for detection in detections:
-            if detection.class_name in self.disabled_classes:
-                # print('detection.class_name:', detection.class_name)
-                continue
-            rules = self.rules.get(detection.class_name)
-            if rules is None:
-                # No rule means no restriction: any YOLO box of this class
-                # is considered a defect by default.
-                matched_boxes.append(detection)
-                matched_classes.add(detection.class_name)
-                continue
-            if not rules:
-                matched_boxes.append(detection)
-                matched_classes.add(detection.class_name)
-                continue
-            values = {
-                "area": detection.area,
-                "area_ratio": detection.area_ratio,
-                "width": max(0.0, detection.box[2] - detection.box[0]),
-                "height": max(0.0, detection.box[3] - detection.box[1]),
-                "confidence": detection.confidence,
-            }
-            if all(_ANALYSE_OPERATORS[comparison](values[field_name], threshold) for field_name, comparison, threshold in rules):
-                matched_boxes.append(detection)
-                matched_classes.add(detection.class_name)
-        return YoloAnalysisResult(
-            matched_boxes=tuple(matched_boxes),
-            matched_classes=matched_classes,
+        return self.analyse_batch([detections])[0]
+
+    def analyse_batch(
+        self,
+        detections_by_crop: Sequence[Sequence[YoloDetection]],
+        crop_images: Sequence[np.ndarray] | None = None,
+    ) -> list[YoloAnalysisResult]:
+        """Analyse one YOLO sub-batch after grouping boxes by detected class.
+
+        Each class group retains the source crop index, so the result can be
+        restored to its original crop after class-level batch analysis. This is
+        the integration point for a classifier that only refines selected YOLO
+        classes in batches.
+        """
+        if crop_images is not None and len(crop_images) != len(detections_by_crop):
+            raise ValueError("crop_images and detections_by_crop must have the same length")
+
+        matched_boxes = [[] for _ in detections_by_crop]
+        matched_classes = [set() for _ in detections_by_crop]
+        detections_by_class: dict[str, list[YoloDetectionCandidate]] = {}
+
+        for crop_index, detections in enumerate(detections_by_crop):
+            for detection in detections:
+                needs_classifier = detection.class_name in self.classifiers
+                if needs_classifier and crop_images is None:
+                    raise ValueError(
+                        f"classifier configured for {detection.class_name!r}, but crop_images were not provided"
+                    )
+                detections_by_class.setdefault(detection.class_name, []).append(
+                    YoloDetectionCandidate(
+                        crop_index=crop_index,
+                        detection=detection,
+                        crop_image=crop_images[crop_index] if needs_classifier and crop_images is not None else None,
+                        box_crop_width=(
+                            self.classifier_crop_sizes[detection.class_name][0]
+                            if needs_classifier
+                            else None
+                        ),
+                        box_crop_height=(
+                            self.classifier_crop_sizes[detection.class_name][1]
+                            if needs_classifier
+                            else None
+                        ),
+                    )
+                )
+
+        for class_name, class_detections in detections_by_class.items():
+            for crop_index, detection in self._analyse_class_batch(class_name, class_detections):
+                matched_boxes[crop_index].append(detection)
+                matched_classes[crop_index].add(detection.class_name)
+            class_detections.clear()
+        detections_by_class.clear()
+
+        return [
+            YoloAnalysisResult(
+                matched_boxes=tuple(crop_matched_boxes),
+                matched_classes=crop_matched_classes,
+            )
+            for crop_matched_boxes, crop_matched_classes in zip(matched_boxes, matched_classes)
+        ]
+
+    def _analyse_class_batch(
+        self,
+        class_name: str,
+        class_detections: Sequence[YoloDetectionCandidate],
+    ) -> list[tuple[int, YoloDetection]]:
+        """Analyse all boxes predicted as one class in the current YOLO sub-batch.
+
+        `class_detections` is deliberately kept as a batch instead of invoking
+        the rule engine during collection. A second-stage classifier can crop
+        and infer this whole sequence once, then return refined detections here.
+        """
+        if class_name in self.disabled_classes:
+            return []
+        rule_matched = [
+            candidate
+            for candidate in class_detections
+            if self._matches(candidate.detection)
+        ]
+        classifier = self.classifiers.get(class_name)
+        if classifier is None:
+            return [
+                (candidate.crop_index, candidate.detection)
+                for candidate in rule_matched
+            ]
+
+        roi_images = [candidate.box_image for candidate in rule_matched]
+        try:
+            classifications = classifier.infer_batch(roi_images)
+        finally:
+            roi_images.clear()
+        if len(classifications) != len(rule_matched):
+            raise RuntimeError(
+                f"{class_name}: classifier returned {len(classifications)} results for "
+                f"{len(rule_matched)} box images"
+            )
+
+        classified_detections: list[tuple[int, YoloDetection]] = []
+        for candidate, classification in zip(rule_matched, classifications):
+            if classification.is_positive:
+                classified_detections.append(
+                    (candidate.crop_index, replace(candidate.detection, class_name=classification.label))
+                )
+        del classifications
+        return classified_detections
+
+    def _matches(self, detection: YoloDetection) -> bool:
+        rules = self.rules.get(detection.class_name)
+        if rules is None or not rules:
+            # No rule means no restriction: any YOLO box of this class is a defect.
+            return True
+        values = {
+            "area": detection.area,
+            "area_ratio": detection.area_ratio,
+            "width": max(0.0, detection.box[2] - detection.box[0]),
+            "height": max(0.0, detection.box[3] - detection.box[1]),
+            "confidence": detection.confidence,
+        }
+        return all(
+            _ANALYSE_OPERATORS[comparison](values[field_name], threshold)
+            for field_name, comparison, threshold in rules
         )
 
 
@@ -551,7 +724,7 @@ class YoloInferer:
             crop_boxes.append(crop_box)
         return crops, matches, crop_boxes, skipped
 
-    def _analyse_result(self, result: Any, aligned_rect: AlignedRect, crop_box: CropBox) -> YoloPrediction:
+    def _extract_detections(self, result: Any, crop_box: CropBox) -> tuple[YoloDetection, ...]:
         boxes = getattr(result, "boxes", None)
         detections: list[YoloDetection] = []
         if boxes is not None and len(boxes) > 0:
@@ -574,8 +747,16 @@ class YoloInferer:
                         area=region_area,
                     )
                 )
+        return tuple(detections)
 
-        analysis = self.result_analyser(detections)
+    def _build_prediction(
+        self,
+        result: Any,
+        aligned_rect: AlignedRect,
+        crop_box: CropBox,
+        detections: tuple[YoloDetection, ...],
+        analysis: YoloAnalysisResult,
+    ) -> YoloPrediction:
         pred_class = analysis.matched_classes
         status = "NG" if analysis.matched_boxes else "OK"
 
@@ -588,7 +769,7 @@ class YoloInferer:
             pred_status=status,
             pred_class=pred_class,
             decision_reason=set(pred_class),
-            detections=tuple(detections),
+            detections=detections,
             yolo_ms=yolo_ms,
         )
 
@@ -732,12 +913,32 @@ class YoloInferer:
                 raise RuntimeError(
                     f"{self.config.light_name}: YOLO returned {len(batch_results)} results for {len(batch_crops)} crops"
                 )
-            for result, crop_img, (batch_index, aligned_rect, crop_box) in zip(
+            batch_entries = list(zip(
                 batch_results,
                 batch_crops,
                 batch_meta,
+            ))
+            detections_by_crop = [
+                self._extract_detections(result, crop_box)
+                for result, _, (_, _, crop_box) in batch_entries
+            ]
+            analyses = self.result_analyser.analyse_batch(
+                detections_by_crop,
+                crop_images=batch_crops,
+            )
+
+            for (result, crop_img, (batch_index, aligned_rect, crop_box)), detections, analysis in zip(
+                batch_entries,
+                detections_by_crop,
+                analyses,
             ):
-                prediction = self._analyse_result(result, aligned_rect, crop_box)
+                prediction = self._build_prediction(
+                    result=result,
+                    aligned_rect=aligned_rect,
+                    crop_box=crop_box,
+                    detections=detections,
+                    analysis=analysis,
+                )
                 light_results[batch_index].predictions.append(prediction)
                 if self.save_predict_input_on_any_light_ng:
                     light_results[batch_index].crops_by_rect_id[prediction.rect_id] = crop_img
@@ -928,6 +1129,7 @@ __all__ = [
     "LightYoloResult",
     "SkippedCrop",
     "YoloDetection",
+    "YoloDetectionCandidate",
     "YoloAnalysisResult",
     "YoloInferer",
     "YoloInfererConfig",
