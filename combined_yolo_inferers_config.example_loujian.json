@@ -8,7 +8,7 @@
         "可忽略-曝点":{"enabled": false}
 
       },
-        "crop_width": 832,
+        "crop_width": 795,
         "crop_height": 170,
         "conf": 0.35,
         "iou": 0.7,
@@ -31,7 +31,7 @@
         "中间线":{"enabled": false},
         "人工类 4":{"enabled": false}
       },
-        "crop_width": 832,
+        "crop_width": 795,
         "crop_height": 170,
         "conf": 0.35,
         "iou": 0.7,
@@ -47,7 +47,7 @@
     },
     {
       "name": "light_3",
-      "weight": "./my_weights/temp_next/20260826-113529-8426e5bb-light3-temp/output/train/weights/best.pt",
+      "weight": "./my_weights/temp_next/20260828-133823-9f9d8b06-light3-temp/output/train/weights/best.pt",
       "analyse": {
           "中间线": {"enabled": false},
           "可忽略-曝点":{"enabled": false},
@@ -55,7 +55,7 @@
           "电极污染": {"confidence": {">": 0.4}},
           "轻微电极污染": {"confidence": {">": 0.6}}
       },
-        "crop_width": 832,
+        "crop_width": 795,
         "crop_height": 170,
         "conf": 0.35,
         "iou": 0.7,

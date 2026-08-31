@@ -54,7 +54,7 @@
           "线条问题":{"width": {">": 120}},
           "电极污染": {"confidence": {">": 0.4}}
       },
-        "crop_width": 832,
+        "crop_width": 795,
         "crop_height": 170,
         "conf": 0.35,
         "iou": 0.7,

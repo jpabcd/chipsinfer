@@ -1,6 +1,6 @@
 {
   "paths": {
-    "imgs_root": "../data/20260806/大图",
+    "imgs_root": "temp/48AMA/",
     "output_root": "outputs/48AMA_line_0821_batchidx_loujian",
     "summary_json": null
   },
@@ -16,7 +16,7 @@
     "dry_run": false
   },
   "inference": {
-    "batch_size": 2,
+    "batch_size": 1,
     "num_workers": 2,
     "persistent_workers": false,
     "prefetch_factor": 2,

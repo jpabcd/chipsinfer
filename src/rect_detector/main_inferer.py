@@ -233,11 +233,15 @@ class MainInferer:
                 light_name: predictions_by_light.get(light_name, {}).get(aligned_rect.rect.id)
                 for light_name in light_order
             }
-            crop_box, crop_consistent = self._shared_crop_box(light_predictions)
-            final_status, final_class, reason, trigger_light = self._decide_final_result(
-                light_predictions=light_predictions,
-                crop_consistent=crop_consistent,
+            crop_box = next(
+                (
+                    prediction.crop_box
+                    for prediction in light_predictions.values()
+                    if prediction is not None
+                ),
+                None,
             )
+            final_status, final_class, reason, trigger_light = self._decide_final_result(light_predictions)
             if final_status == "INVALID":
                 missing_lights = [name for name, prediction in light_predictions.items() if prediction is None]
                 warnings.append(
@@ -258,24 +262,11 @@ class MainInferer:
         return chips, warnings
 
     @staticmethod
-    def _shared_crop_box(
-        light_predictions: Mapping[str, YoloPrediction | None],
-    ) -> tuple[CropBox | None, bool]:
-        boxes = [prediction.crop_box for prediction in light_predictions.values() if prediction is not None]
-        if not boxes:
-            return None, False
-        first = boxes[0]
-        return first, all(box == first for box in boxes[1:])
-
-    @staticmethod
     def _decide_final_result(
         light_predictions: Mapping[str, YoloPrediction | None],
-        crop_consistent: bool,
     ) -> tuple[str, str, str, str | None]:
         if any(prediction is None for prediction in light_predictions.values()):
             return "INVALID", "", "Missing_Light_Result", None
-        if not crop_consistent:
-            return "INVALID", "", "Inconsistent_Crop_Box", None
 
         predictions = [prediction for prediction in light_predictions.values() if prediction is not None]
         ng_predictions = [prediction for prediction in predictions if prediction.pred_status == "NG"]
