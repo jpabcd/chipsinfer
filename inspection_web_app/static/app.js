@@ -37,6 +37,7 @@ const STORAGE_KEYS = {
   resultJson: "inspection.resultJson",
   rememberedJsons: "inspection.rememberedJsons",
 };
+const MAX_REMEMBERED_JSONS = 3;
 
 const gallery = document.querySelector("#gallery");
 const statusBox = document.querySelector("#status");
@@ -509,20 +510,27 @@ function uniqueNonEmptyStrings(values) {
 function loadRememberedJsons() {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.rememberedJsons) || "[]");
-    rememberedJsons = uniqueNonEmptyStrings(parsed).slice(0, 50);
+    rememberedJsons = uniqueNonEmptyStrings(parsed).slice(0, MAX_REMEMBERED_JSONS);
+    saveRememberedJsons();
   } catch {
     rememberedJsons = [];
   }
 }
 
 function saveRememberedJsons() {
-  localStorage.setItem(STORAGE_KEYS.rememberedJsons, JSON.stringify(rememberedJsons.slice(0, 50)));
+  localStorage.setItem(
+    STORAGE_KEYS.rememberedJsons,
+    JSON.stringify(rememberedJsons.slice(0, MAX_REMEMBERED_JSONS)),
+  );
 }
 
 function rememberJsonPath(path) {
   const text = String(path || "").trim();
   if (!text) return;
-  rememberedJsons = [text, ...rememberedJsons.filter((item) => item !== text)].slice(0, 50);
+  rememberedJsons = [
+    text,
+    ...rememberedJsons.filter((item) => item !== text),
+  ].slice(0, MAX_REMEMBERED_JSONS);
   saveRememberedJsons();
   localStorage.setItem(STORAGE_KEYS.resultJson, text);
 }
@@ -617,10 +625,14 @@ function renderJsonOptions(items = []) {
   }
 
   const fragment = document.createDocumentFragment();
+  const currentPath = controls.resultJson?.value.trim() || "";
   items.forEach((item) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "json-option-btn";
+    if (item.path === currentPath) {
+      button.classList.add("current");
+    }
     if (!item.exists) {
       button.classList.add("missing");
     }
@@ -645,7 +657,7 @@ function renderJsonOptions(items = []) {
 }
 
 function refreshJsonOptionsPanel() {
-  renderJsonOptions(mergeTxtAndRememberedOptions(jsonOptionsFromTxt));
+  renderJsonOptions(getResultJsonSelectItems());
   refreshResultJsonSelect();
 }
 
@@ -1130,6 +1142,7 @@ async function loadImages() {
   const currentResultJson = controls.resultJson?.value.trim() || "";
   if (currentResultJson) {
     rememberJsonPath(currentResultJson);
+    refreshJsonOptionsPanel();
   }
 
   setStatus("正在加载图片...");
@@ -1929,7 +1942,6 @@ if (controls.resultJson) {
   controls.resultJson.addEventListener("input", () => {
     updateImagePathExportLink();
     updateAnnotationsExportLink();
-    rememberJsonPath(controls.resultJson.value);
     refreshJsonOptionsPanel();
   });
 }

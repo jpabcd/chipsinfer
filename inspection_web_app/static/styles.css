@@ -155,6 +155,16 @@ main {
   border-color: var(--brand);
 }
 
+.json-option-btn.current {
+  background: #163a63;
+  border-color: #163a63;
+  color: #fff;
+}
+
+.json-option-btn.current span {
+  color: #d9eaff;
+}
+
 .json-option-btn.missing {
   opacity: 0.6;
 }
