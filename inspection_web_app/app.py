@@ -933,12 +933,13 @@ def _region_signature(region):
     y = _to_float(region.get("y")) or 0.0
     w = _to_float(region.get("w")) or 0.0
     h = _to_float(region.get("h")) or 0.0
+    label = str(region.get("label") or region.get("note") or region.get("className") or "")
     return "|".join([
         f"{x:.6f}",
         f"{y:.6f}",
         f"{w:.6f}",
         f"{h:.6f}",
-        str(region.get("label") or ""),
+        label,
     ])
 
 
