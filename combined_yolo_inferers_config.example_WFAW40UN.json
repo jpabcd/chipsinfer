@@ -2,9 +2,9 @@
   "lights": [
     {
       "name": "light_1",
-      "weight": "./my_weights/runs/20260807-113436-250e37cf-WFAW40UN_S26E31147-03_light1/output/train/weights/best.pt",
+      "weight": "./my_weights/runs/20260907-102624-c4a9c124-40u-light1/output/train/weights/best.pt",
       "analyse": {
-
+        "可忽略-曝点":{"enabled": false}
       },
         "crop_width": 775,
         "crop_height": 770,
@@ -22,15 +22,15 @@
     },
     {
       "name": "light_2",
-      "weight": "./my_weights/runs/20260806-114922-171a0f36-WFAW40UN_S26E31147-03_light2/output/train/weights/best.pt",
+      "weight": "./my_weights/runs/20260908-142936-37dc10a3-40u-light2-384/output/train/weights/best.pt",
       "analyse": {
-
+        "可过":{"enabled": false}
       },
         "crop_width": 775,
         "crop_height": 770,
-        "conf": 0.35,
+        "conf": 0.19,
         "iou": 0.7,
-        "imgsz": 320,
+        "imgsz": 384,
         "device": "0",
         "quantize": 16,
         "use_engine": true,
@@ -42,13 +42,13 @@
     },
     {
       "name": "light_3",
-      "weight": "./my_weights/runs/20260811-110017-06cb497a-WFAW40UN_S26E31147-03_light3/output/train/weights/best.pt",
+      "weight": "./my_weights/runs/20260909-102919-82a7550f-40u-light3/output/train/weights/best.pt",
       "analyse": {
-
+        "可过":{"enabled": false}
       },
         "crop_width": 775,
         "crop_height": 770,
-        "conf": 0.35,
+        "conf": 0.25,
         "iou": 0.7,
         "imgsz": 320,
         "device": "0",
@@ -62,15 +62,13 @@
     },
     {
       "name": "light_4",
-      "weight": "./my_weights/runs/20260811-151935-ba489754-WFAW40UN_S26E31147-03_light4/output/train/weights/best.pt",
+      "weight": "./my_weights/runs/20260909-153256-cea07d23-40u-light4/output/train/weights/best.pt",
       "analyse": {
-          "可忽略-曝点":{"enabled": false},
-          "细线问题":{"enabled": false},
-          "轻微灰斑":{"enabled": false}
+          "可过":{"enabled": false}
         },
           "crop_width": 775,
           "crop_height": 770,
-          "conf": 0.35,
+          "conf": 0.25,
           "iou": 0.7,
           "imgsz": 320,
           "device": "0",
