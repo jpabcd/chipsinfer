@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-PYTHON_BIN="${PYTHON_BIN:-../../.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-.venv/Scripts/python.exe}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "Python interpreter is not executable: $PYTHON_BIN" >&2
   exit 1
