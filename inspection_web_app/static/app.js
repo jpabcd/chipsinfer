@@ -51,7 +51,6 @@ const waferMapEls = {
   toggle: document.querySelector("#waferMapToggle"),
   finalStatus: document.querySelector("#waferFinalStatus"),
   baseCsv: document.querySelector("#waferBaseCsv"),
-  chipAspect: document.querySelector("#waferChipAspect"),
   compare: document.querySelector("#compareWaferMap"),
   clearComparison: document.querySelector("#clearWaferComparison"),
   clearChipFilter: document.querySelector("#clearChipFilter"),
@@ -74,8 +73,6 @@ const statsEls = {
 let shuffleSeed = String(Date.now());
 let waferMapState = {
   chips: [],
-  chipAspect: 5,
-  chipAspectCustomized: false,
   selectedIndex: null,
   visibleIndices: [],
   sourceKey: "",
@@ -872,13 +869,7 @@ function drawWaferMapPoints() {
   // so apply this physical chip aspect before fitting the complete map. The
   // source CSV spans X=81 and Y=451; without this adjustment it becomes an
   // incorrectly narrow vertical strip in the otherwise square wafer view.
-  const inputChipAspect = Number(waferMapEls.chipAspect?.value);
-  const chipAspect = Number.isFinite(inputChipAspect) && inputChipAspect > 0
-    ? inputChipAspect
-    : (Number.isFinite(Number(waferMapState.chipAspect)) && Number(waferMapState.chipAspect) > 0
-      ? Number(waferMapState.chipAspect)
-      : 5);
-  waferMapState.chipAspect = chipAspect;
+  const chipAspect = 5;
   const mapScale = Math.min(
     (radius * 1.72) / (rangeX * chipAspect),
     (radius * 1.72) / rangeY,
@@ -967,13 +958,6 @@ function waferMapSourceKey() {
 
 function renderWaferMapData(data) {
   waferMapState.chips = Array.isArray(data.chips) ? data.chips : [];
-  if (!waferMapState.chipAspectCustomized
-      && Number.isFinite(Number(data.chipAspect)) && Number(data.chipAspect) > 0) {
-    waferMapState.chipAspect = Number(data.chipAspect);
-    if (waferMapEls.chipAspect) {
-      waferMapEls.chipAspect.value = String(waferMapState.chipAspect);
-    }
-  }
   waferMapState.selectedIndex = waferMapState.chips.findIndex((chip) => (
     hasChipFilter() && String(chip.mx) === chipFilter.mx && String(chip.my) === chipFilter.my
   ));
@@ -1058,19 +1042,6 @@ if (waferMapEls.finalStatus) {
     // gallery request then applies the same final-result constraint to images.
     drawWaferMapPoints();
     loadImages();
-  });
-}
-
-if (waferMapEls.chipAspect) {
-  waferMapEls.chipAspect.addEventListener("change", () => {
-    const value = Number(waferMapEls.chipAspect.value);
-    if (!Number.isFinite(value) || value <= 0) {
-      waferMapEls.chipAspect.value = String(waferMapState.chipAspect || 5);
-      return;
-    }
-    waferMapState.chipAspect = value;
-    waferMapState.chipAspectCustomized = true;
-    drawWaferMapPoints();
   });
 }
 

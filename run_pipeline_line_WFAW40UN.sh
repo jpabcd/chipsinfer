@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-PYTHON_BIN="${PYTHON_BIN:-.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-.venv/Scripts/python.exe}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "Python interpreter is not executable: $PYTHON_BIN" >&2
   exit 1
@@ -21,5 +21,4 @@ RUNTIME_CONFIG="${RUNTIME_CONFIG:-configs/runtime/WFAW40UN.json}"
 
 
 #需要保存时显式传入：./run_pipeline_line_WFAW40UN.sh --save-predict-input --save-predict-input-on-any-light-ng
-#需要保存时显式传入：./run_pipeline_line_WFAW40UN.sh --save-predict-input 
 #通常产线：./run_pipeline_line_WFAW40UN.sh --output-root outputs/WFAW40UN_line --watch --rescan-interval 30

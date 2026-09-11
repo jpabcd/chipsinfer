@@ -24,11 +24,13 @@ SAVE_PREDICT_INPUT="${SAVE_PREDICT_INPUT:-false}"
 
 CMD=(
   "$PYTHON_BIN" run_pipeline.py E:\\AOI\\code2_archive\\48AMA\\20260819\\大图\\S26H04057-14
-  --batch-size "$BATCH_SIZE"
-  --num-workers "$NUM_WORKERS"
-  --no-persistent-workers
-  --prefetch-factor "$PREFETCH_FACTOR"
-  --light-read-workers "$LIGHT_READ_WORKERS"
+  --batch-size 2
+  --num-workers 8
+  --persistent-workers
+  --prefetch-factor 2
+  --light-read-workers 4
+  #--no-save-predict-input
+  --save-predict-input
   --output-dir "$OUTPUT_DIR"
   --output-json "$OUTPUT_DIR/json/S26H04057-14.jsonl"
   --predict-input-root "$OUTPUT_DIR/predict_input"
