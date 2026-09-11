@@ -9,6 +9,7 @@ HOST="${1:-127.0.0.1}"
 PORT="${2:-7860}"
 RESULT_JSON="${3:-$SCRIPT_DIR/outputs/json/main_inferer_dataloader_results.jsonl}"
 PRJ_ROOT="${4:-$SCRIPT_DIR}"
+PRODUCT_CONFIG="${5:-}"
 
 if [[ -x ".venv/Scripts/python.exe" ]]; then
   PYTHON=".venv/Scripts/python.exe"
@@ -18,8 +19,15 @@ else
   PYTHON="python"
 fi
 
-"$PYTHON" inspection_web_app/app.py \
+APP_ARGS=(
+  inspection_web_app/app.py \
   --host "$HOST" \
   --port "$PORT" \
   --result-json "$RESULT_JSON" \
   --project-dir "$PRJ_ROOT"
+)
+if [[ -n "$PRODUCT_CONFIG" ]]; then
+  APP_ARGS+=(--product-config "$PRODUCT_CONFIG")
+fi
+
+"$PYTHON" "${APP_ARGS[@]}"

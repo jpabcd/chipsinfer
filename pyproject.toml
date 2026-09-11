@@ -10,6 +10,10 @@ dependencies = [
     "orjson>=3.11.9",
     "pandas>=3.0.5",
     "pillow>=12.3.0",
+    "nvidia-modelopt[onnx]>=0.44",
+    "tensorrt-cu12==11.2.1.2",
+    "tensorrt-cu12-bindings==11.2.1.2",
+    "tensorrt-cu12-libs==11.2.1.2",
     "ultralytics==8.4.115",
     "torch==2.8.0+cu128",
     "torchaudio==2.8.0+cu128",
@@ -26,7 +30,16 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true
+
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
+nvidia-modelopt = { index = "nvidia" }
+tensorrt-cu12 = { index = "nvidia" }
+tensorrt-cu12-bindings = { index = "nvidia" }
+tensorrt-cu12-libs = { index = "nvidia" }
