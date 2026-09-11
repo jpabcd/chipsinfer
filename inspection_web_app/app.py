@@ -52,6 +52,7 @@ INFERENCE_CACHE_LOCK = threading.RLock()
 ANNOTATION_WRITE_LOCK = threading.RLock()
 PROJECT_DIR = APP_DIR.parent
 CONFIGURED_RESULT_JSON = ""
+PRODUCT_CONFIG_PATH = ""
 JSON_OPTIONS_TXT = APP_DIR / "json_candidates.txt"
 INFERENCE_DISK_CACHE_DIR = APP_DIR / ".inference_cache"
 THUMBNAIL_CACHE_DIR = APP_DIR / ".thumbnail_cache"
@@ -80,6 +81,18 @@ def clear_inference_runtime_cache(clear_disk_cache=False):
                 except OSError:
                     continue
     return removed_disk_files
+
+
+def load_wafer_map_chip_aspect():
+    """Read the product-specific chip aspect used by the web wafer map."""
+    if not PRODUCT_CONFIG_PATH:
+        return 5.0
+    try:
+        config = json.loads(Path(PRODUCT_CONFIG_PATH).read_text(encoding="utf-8"))
+        value = float(config.get("wafer_map", {}).get("chip_aspect", 5.0))
+        return value if value > 0 else 5.0
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return 5.0
 
 
 def normalize_path_text(value):
@@ -1442,6 +1455,7 @@ class InspectionHandler(BaseHTTPRequestHandler):
     def handle_wafer_map(self, query):
         result_json = query.get("result_json", [""])[0].strip() or CONFIGURED_RESULT_JSON
         base_csv = query.get("base_csv", [""])[0].strip()
+        chip_aspect = load_wafer_map_chip_aspect()
         if not result_json:
             self.send_json({"error": "请先指定推理结果 JSON。"}, HTTPStatus.BAD_REQUEST)
             return
@@ -1474,6 +1488,10 @@ class InspectionHandler(BaseHTTPRequestHandler):
                 str(base_csv_path) if base_csv_path else None,
                 base_csv_path.stat().st_mtime_ns if base_csv_path else None,
                 base_csv_path.stat().st_size if base_csv_path else None,
+                PRODUCT_CONFIG_PATH,
+                Path(PRODUCT_CONFIG_PATH).stat().st_mtime_ns
+                if PRODUCT_CONFIG_PATH and Path(PRODUCT_CONFIG_PATH).is_file()
+                else None,
             )
         except OSError as error:
             self.send_json({"error": f"读取 wafer map 数据失败：{error}"}, HTTPStatus.BAD_REQUEST)
@@ -1529,6 +1547,7 @@ class InspectionHandler(BaseHTTPRequestHandler):
         conflict_ng_count = sum(chip["conflictType"] == "CONFLICT_NG" for chip in chip_records)
         response_payload = {
             "productName": result_json_path.stem,
+            "chipAspect": chip_aspect,
             "chipCount": len(chip_records),
             "chips": chip_records,
             "comparison": {
@@ -2268,7 +2287,7 @@ class InspectionHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    global PROJECT_DIR, CONFIGURED_RESULT_JSON
+    global PROJECT_DIR, CONFIGURED_RESULT_JSON, PRODUCT_CONFIG_PATH
     parser = argparse.ArgumentParser(description="Industrial image inspection web app")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=7868, type=int)
@@ -2281,12 +2300,21 @@ def main():
         default=str(PROJECT_DIR),
         help="用于拼接 JSON 中 path_ 相对路径的工程目录",
     )
+    parser.add_argument(
+        "--product-config",
+        default="",
+        help="产品配置 JSON；读取 wafer_map.chip_aspect 控制网页 mapping 中的 chip 长宽比",
+    )
     args = parser.parse_args()
 
     PROJECT_DIR = resolve_user_supplied_path(args.project_dir)
     if not PROJECT_DIR.is_dir():
         raise SystemExit(f"工程目录不存在：{PROJECT_DIR}")
     CONFIGURED_RESULT_JSON = str(resolve_user_supplied_path(args.result_json))
+    if args.product_config:
+        PRODUCT_CONFIG_PATH = str(resolve_user_supplied_path(args.product_config))
+        if not Path(PRODUCT_CONFIG_PATH).is_file():
+            raise SystemExit(f"产品配置不存在：{PRODUCT_CONFIG_PATH}")
 
     server = ThreadingHTTPServer((args.host, args.port), InspectionHandler)
     url = f"http://{args.host}:{args.port}"
@@ -2294,6 +2322,7 @@ def main():
     print(f"Annotations: {ANNOTATION_FILE}", flush=True)
     print(f"Result JSON: {CONFIGURED_RESULT_JSON}", flush=True)
     print(f"Project directory: {PROJECT_DIR}", flush=True)
+    print(f"Wafer map chip aspect: {load_wafer_map_chip_aspect()}", flush=True)
     print(f"JSON parser: {'orjson' if orjson is not None else 'stdlib json (slow fallback)'}", flush=True)
     print(f"Inference cache directory: {INFERENCE_DISK_CACHE_DIR}", flush=True)
     if not Path(CONFIGURED_RESULT_JSON).is_file():

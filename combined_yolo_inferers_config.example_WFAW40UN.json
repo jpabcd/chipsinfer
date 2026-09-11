@@ -3,7 +3,9 @@
     {
       "name": "light_1",
       "weight": "./my_weights/runs/20260907-102624-c4a9c124-40u-light1/output/train/weights/best.pt",
+      "weight": "./my_weights/runs/20260907-102624-c4a9c124-40u-light1/output/train/weights/best.pt",
       "analyse": {
+        "可忽略-曝点":{"enabled": false}
         "可忽略-曝点":{"enabled": false}
       },
         "crop_width": 775,
@@ -22,14 +24,17 @@
     },
     {
       "name": "light_2",
-      "weight": "./my_weights/runs/20260908-142936-37dc10a3-40u-light2-384/output/train/weights/best.pt",
+      "weight": "./my_weights/runs/20260911-110728-55c58bef-40u-light2-384/output/train/weights/best.pt",
       "analyse": {
+        "可过":{"enabled": false}
         "可过":{"enabled": false}
       },
         "crop_width": 775,
         "crop_height": 770,
         "conf": 0.19,
+        "conf": 0.19,
         "iou": 0.7,
+        "imgsz": 384,
         "imgsz": 384,
         "device": "0",
         "quantize": 16,
@@ -42,8 +47,9 @@
     },
     {
       "name": "light_3",
-      "weight": "./my_weights/runs/20260909-102919-82a7550f-40u-light3/output/train/weights/best.pt",
+      "weight": "./my_weights/runs/20260910-160414-7f944680-40u-light3/output/train/weights/best.pt",
       "analyse": {
+        "可过":{"enabled": false}
         "可过":{"enabled": false}
       },
         "crop_width": 775,
@@ -62,8 +68,9 @@
     },
     {
       "name": "light_4",
-      "weight": "./my_weights/runs/20260909-153256-cea07d23-40u-light4/output/train/weights/best.pt",
+      "weight": "./my_weights/runs/20260911-132002-6dcd04b5-40u-light4/output/train/weights/best.pt",
       "analyse": {
+          "可过":{"enabled": false}
           "可过":{"enabled": false}
         },
           "crop_width": 775,

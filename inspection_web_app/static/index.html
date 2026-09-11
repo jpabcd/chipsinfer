@@ -130,6 +130,10 @@
             基准 CSV
             <input id="waferBaseCsv" type="text" placeholder="例如：D:/reports/base.csv">
           </label>
+          <label class="wafer-map-chip-aspect">
+            Chip 长宽比
+            <input id="waferChipAspect" type="number" value="5" min="0.01" step="0.01" title="单个 chip 的宽度 / 高度">
+          </label>
           <button id="compareWaferMap" type="button" class="wafer-map-compare">比较</button>
           <button id="clearWaferComparison" type="button" class="wafer-map-clear">清除比较</button>
           <button id="clearChipFilter" type="button" class="wafer-map-clear" disabled>清除 chip 定位</button>
