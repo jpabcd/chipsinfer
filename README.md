@@ -1,3 +1,6 @@
+current 48AMA:run_pipeline_line_loujian.sh
+current 40U:run_pipeline_line_WFAW40UN.sh
+
 # rect_detector
 
 This directory is the project root for the rect detector pipeline.
